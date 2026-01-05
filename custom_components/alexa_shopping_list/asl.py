@@ -184,19 +184,7 @@ class AlexaShoppingListSync:
         logger.debug(entry)
 
 
-    async def sync(self, logger=None, force=False):
-        loop = asyncio.get_running_loop()
-
-        if os.path.exists(self._hasl_path) == False:
-            await self._debug_log_entry(logger, "HA shopping list file not found - creating empty list")
-            await loop.run_in_executor(None, self._export_ha_shopping_list, [])
-
-        if self._cached_list_needs_updating() == False and force == False:
-            return False
-        
-        if self._is_syncing == True:
-            return False
-        self._is_syncing = True
+    async def _do_sync(self, logger=None, force=False):
 
         ha_list = await loop.run_in_executor(None, self._read_ha_shopping_list)
         original_ha_list_hash = await loop.run_in_executor(None, self._ha_shopping_list_hash)
@@ -230,7 +218,6 @@ class AlexaShoppingListSync:
         await loop.run_in_executor(None, self._export_ha_shopping_list, refreshed_items)
         await self._hasl_refresh()
 
-        self._is_syncing = False
 
         await self._debug_log_entry(logger, "Original list hash: "+original_ha_list_hash)
         new_ha_list_hash = await loop.run_in_executor(None, self._ha_shopping_list_hash)
@@ -242,6 +229,29 @@ class AlexaShoppingListSync:
             await self._debug_log_entry(logger, "List did not change")
             return False
 
+    
+    async def sync(self, logger=None, force=False):
+        loop = asyncio.get_running_loop()
 
+        if os.path.exists(self._hasl_path) == False:
+            await self._debug_log_entry(logger, "HA shopping list file not found - creating empty list")
+            await loop.run_in_executor(None, self._export_ha_shopping_list, [])
+
+        if self._cached_list_needs_updating() == False and force == False:
+            return False
+        
+        if self._is_syncing == True:
+            return False
+        self._is_syncing = True
+
+        try:
+            result = await self._do_sync(logger, force)
+        except Exception as e:
+            await self._debug_log_entry(logger, type(e))
+            await self._debug_log_entry(logger, e)
+        finally:
+            self._is_syncing = False
+
+        return result
     # ============================================================
 

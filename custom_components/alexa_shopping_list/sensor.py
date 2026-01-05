@@ -43,7 +43,8 @@ class AlexaShoppingListSyncSensor(SensorEntity):
             if updated == True:
                 _LOGGER.debug("Firing alexa_shopping_list_changed event")
                 self.hass.bus.async_fire("alexa_shopping_list_changed")
+                self._attr_native_value = self.alexa.last_updated
 
         except Exception as e:
             _LOGGER.error(f"Alexa Shopping List Sync Error: {e}", exc_info=True)
-        self._attr_native_value = self.alexa.last_updated
+

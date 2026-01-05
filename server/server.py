@@ -241,7 +241,7 @@ async def _process_command(websocket, path):
         response = {"result": None, "error": None}
         results = await _route_command(command, arguments)
 
-        if len(results) == 2:
+        if results is not None and len(results) == 2:
             response = {
                 "result": results[0],
                 "error": results[1]

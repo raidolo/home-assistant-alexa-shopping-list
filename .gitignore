@@ -8,3 +8,4 @@ old/
 server/cache
 .DS_Store
 client/chromium/
+.agent/

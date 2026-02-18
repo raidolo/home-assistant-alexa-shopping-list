@@ -5,8 +5,11 @@ import websockets
 import json
 import signal
 import os
+import logging
 from alexa import AlexaShoppingList
 import time
+
+logger = logging.getLogger(__name__)
 
 clients = set()
 
@@ -56,7 +59,7 @@ def _set_config_value(key, new_value=None):
     global config
     if new_value != None:
         config[key] = new_value
-    else:
+    elif key in config:
         del config[key]
     _save_config()
 
@@ -149,42 +152,62 @@ async def _cmd_login(args):
 
 
 async def _cmd_get_shopping_list():
-    instance = _start_alexa()
-    if instance.requires_login():
-        result =  None, "Not authenticated"
-    else:
-        result = instance.get_alexa_list(), None
-    _stop_alexa()
+    try:
+        instance = _start_alexa()
+        if instance.requires_login():
+            result = None, "Not authenticated"
+        else:
+            result = instance.get_alexa_list(), None
+    except Exception as e:
+        logger.error(f"Error getting shopping list: {e}", exc_info=True)
+        result = None, f"Server error: {e}"
+    finally:
+        _stop_alexa()
     return result
 
 
 async def _cmd_get_add_shopping_list_item(args):
-    instance = _start_alexa()
-    if instance.requires_login():
-        result =  None, "Not authenticated"
-    else:
-        result = instance.add_alexa_list_item(args['item']), None
-    _stop_alexa()
+    try:
+        instance = _start_alexa()
+        if instance.requires_login():
+            result = None, "Not authenticated"
+        else:
+            result = instance.add_alexa_list_item(args['item']), None
+    except Exception as e:
+        logger.error(f"Error adding item: {e}", exc_info=True)
+        result = None, f"Server error: {e}"
+    finally:
+        _stop_alexa()
     return result
 
 
 async def _cmd_get_update_shopping_list_item(args):
-    instance = _start_alexa()
-    if instance.requires_login():
-        result =  None, "Not authenticated"
-    else:
-        result = instance.update_alexa_list_item(args['old'], args['new']), None
-    _stop_alexa()
+    try:
+        instance = _start_alexa()
+        if instance.requires_login():
+            result = None, "Not authenticated"
+        else:
+            result = instance.update_alexa_list_item(args['old'], args['new']), None
+    except Exception as e:
+        logger.error(f"Error updating item: {e}", exc_info=True)
+        result = None, f"Server error: {e}"
+    finally:
+        _stop_alexa()
     return result
 
 
 async def _cmd_get_remove_shopping_list_item(args):
-    instance = _start_alexa()
-    if instance.requires_login():
-        result =  None, "Not authenticated"
-    else:
-        result = instance.remove_alexa_list_item(args['item']), None
-    _stop_alexa()
+    try:
+        instance = _start_alexa()
+        if instance.requires_login():
+            result = None, "Not authenticated"
+        else:
+            result = instance.remove_alexa_list_item(args['item']), None
+    except Exception as e:
+        logger.error(f"Error removing item: {e}", exc_info=True)
+        result = None, f"Server error: {e}"
+    finally:
+        _stop_alexa()
     return result
 
 # ============================================================
@@ -208,8 +231,6 @@ async def _route_command(command, arguments={}):
         return await _cmd_is_authenticated()
     if command == "login":
         return await _cmd_login(arguments)
-    if command == "mfa":
-        return await _cmd_mfa(arguments)
     
     # Shopping list
     if command == "get_list":
@@ -226,37 +247,40 @@ async def _route_command(command, arguments={}):
         return "pong", None
     if command == "shutdown":
         await _shutdown_server()
+        return True, None
+    
+    return None, f"Unknown command: {command}"
 
 
 async def _process_command(websocket, path):
     clients.add(websocket)
-    # try:
-    async for message in websocket:
-        # try:
+    try:
+        async for message in websocket:
+            try:
+                data = json.loads(message)
+                command = data.get('command')
+                arguments = data.get('args')
 
-        data = json.loads(message)
-        command = data.get('command')
-        arguments = data.get('args')
+                response = {"result": None, "error": None}
+                results = await _route_command(command, arguments)
 
-        response = {"result": None, "error": None}
-        results = await _route_command(command, arguments)
+                if results is not None and len(results) == 2:
+                    response = {
+                        "result": results[0],
+                        "error": results[1]
+                    }
+                else:
+                    response['error'] = 'Unknown command'
 
-        if results is not None and len(results) == 2:
-            response = {
-                "result": results[0],
-                "error": results[1]
-            }
-        else:
-            response['error'] = 'Unknown command'
+            except json.JSONDecodeError:
+                response = {'result': None, 'error': 'Invalid JSON'}
+            except Exception as e:
+                logger.error(f"Error processing command: {e}", exc_info=True)
+                response = {'result': None, 'error': f'Server error: {e}'}
 
-        # except json.JSONDecodeError:
-        #     response = {'error': 'Invalid JSON'}
-        # except:
-        #     response = {'error': 'Fatal exception'}
-
-        await websocket.send(json.dumps(response))
-    # finally:
-    clients.remove(websocket)
+            await websocket.send(json.dumps(response))
+    finally:
+        clients.discard(websocket)
 
 # ============================================================
 # Start/Stop

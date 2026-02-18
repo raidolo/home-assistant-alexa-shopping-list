@@ -17,7 +17,7 @@ class AlexaShoppingListSync:
         self._hasl_path = hasl_path
         self._hasl_refresh = hasl_refresh
         self._setup_cached_list(sync_mins * 60)
-        self._is_syncing = False
+        self._sync_lock = asyncio.Lock()
 
     # ============================================================
     # Helpers
@@ -90,6 +90,12 @@ class AlexaShoppingListSync:
     
 
     def _update_cached_list(self, new_list):
+        if new_list is None:
+            return
+        if isinstance(new_list, list) and len(new_list) == 0 and len(self._cached_list) > 0:
+            # Don't overwrite a populated cache with an empty list
+            # This prevents accidental data loss from failed scrapes
+            return
         self._cached_list = new_list
         self.last_updated = datetime.datetime.now().astimezone()
     
@@ -150,7 +156,7 @@ class AlexaShoppingListSync:
         export = []
         for item in items:
             export.append({
-                "id": item.replace(" ", "_"),
+                "id": hashlib.md5(item.encode('utf-8')).hexdigest()[:12],
                 "name": item,
                 "complete": False
             })
@@ -184,7 +190,7 @@ class AlexaShoppingListSync:
         logger.debug(entry)
 
 
-    async def _do_sync(self, logger=None, force=False):
+    async def _do_sync(self, loop, logger=None, force=False):
 
         ha_list = await loop.run_in_executor(None, self._read_ha_shopping_list)
         original_ha_list_hash = await loop.run_in_executor(None, self._ha_shopping_list_hash)
@@ -240,17 +246,16 @@ class AlexaShoppingListSync:
         if self._cached_list_needs_updating() == False and force == False:
             return False
         
-        if self._is_syncing == True:
+        if self._sync_lock.locked():
+            await self._debug_log_entry(logger, "Sync already in progress, skipping")
             return False
-        self._is_syncing = True
 
-        try:
-            result = await self._do_sync(logger, force)
-        except Exception as e:
-            await self._debug_log_entry(logger, type(e))
-            await self._debug_log_entry(logger, e)
-        finally:
-            self._is_syncing = False
+        result = False
+        async with self._sync_lock:
+            try:
+                result = await self._do_sync(loop, logger, force)
+            except Exception as e:
+                await self._debug_log_entry(logger, f"Sync error: {type(e).__name__}: {e}")
 
         return result
     # ============================================================

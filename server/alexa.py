@@ -149,8 +149,8 @@ class AlexaShoppingList:
 
 
     def _ensure_driver_is_on_alexa_list(self, refresh: bool = False):
-        list_url = "https://www."+self.amazon_url+"/alexaquantum/sp/alexaShoppingList?ref=nav_asl"
-        if self.driver.current_url != list_url:
+        list_url = "https://www."+self.amazon_url+"/alexaquantum/sp/alexaShoppingList"
+        if "/alexaquantum/sp/alexaShoppingList" not in self.driver.current_url:
             self._selenium_get(list_url, (By.CLASS_NAME, 'virtual-list'))
         elif refresh == True:
             self.driver.refresh()
@@ -164,30 +164,46 @@ class AlexaShoppingList:
         list_container = self.driver.find_element(By.CLASS_NAME, 'virtual-list')
 
         found = []
-        last = None
+        last_text = None
+        max_scrolls = 50
+        scroll_count = 0
         while True:
-            list_items = list_container.find_elements(By.CLASS_NAME, 'item-title')
-            for item in list_items:
-                if item.get_attribute('innerText') not in found:
-                    found.append(item.get_attribute('innerText'))
-            if not list_items or last == list_items[-1]:
-                # We've reached the end
-                break
-            last = list_items[-1]
-            self.driver.execute_script("arguments[0].scrollIntoView();", last)
-            time.sleep(1)
+            try:
+                list_items = list_container.find_elements(By.CLASS_NAME, 'item-title')
+                for item in list_items:
+                    text = item.get_attribute('innerText')
+                    if text and text not in found:
+                        found.append(text)
+                current_last_text = list_items[-1].get_attribute('innerText') if list_items else None
+                if not list_items or current_last_text == last_text:
+                    # We've reached the end
+                    break
+                last_text = current_last_text
+                scroll_count += 1
+                if scroll_count >= max_scrolls:
+                    break
+                self.driver.execute_script("arguments[0].scrollIntoView();", list_items[-1])
+                time.sleep(1)
+            except StaleElementReferenceException:
+                time.sleep(1)
+                continue
 
         if not refresh:
             # Now let's scroll back to the top
-            first = None
+            first_text = None
             while True:
-                list_items = list_container.find_elements(By.CLASS_NAME, 'item-title')
-                if not list_items or first == list_items[0]:
-                    # We've reached the top
-                    break
-                first = list_items[0]
-                scroll_origin = ScrollOrigin.from_element(first)
-                ActionChains(self.driver).scroll_from_origin(scroll_origin, 0, -1000).perform()
+                try:
+                    list_items = list_container.find_elements(By.CLASS_NAME, 'item-title')
+                    current_first_text = list_items[0].get_attribute('innerText') if list_items else None
+                    if not list_items or current_first_text == first_text:
+                        # We've reached the top
+                        break
+                    first_text = current_first_text
+                    scroll_origin = ScrollOrigin.from_element(list_items[0])
+                    ActionChains(self.driver).scroll_from_origin(scroll_origin, 0, -1000).perform()
+                except StaleElementReferenceException:
+                    time.sleep(1)
+                    continue
 
         return found
 
@@ -197,21 +213,35 @@ class AlexaShoppingList:
         time.sleep(5)
         list_container = self.driver.find_element(By.CLASS_NAME, 'virtual-list')
 
-        last = None
+        last_text = None
+        max_scrolls = 50
+        scroll_count = 0
         while True:
-            list_items = list_container.find_elements(By.CLASS_NAME, 'inner')
-            for container in list_items:
-                title_element = container.find_element(By.CLASS_NAME, 'item-title')
-                if title_element.get_attribute('innerText') == item:
-                    return container  # Return immediately when found
+            try:
+                list_items = list_container.find_elements(By.CLASS_NAME, 'inner')
+                for container in list_items:
+                    title_element = container.find_element(By.CLASS_NAME, 'item-title')
+                    if title_element.get_attribute('innerText') == item:
+                        return container  # Return immediately when found
 
-            if not list_items or last == list_items[-1]:
-                # We've reached the top
-                break
+                current_last_text = None
+                if list_items:
+                    last_title = list_items[-1].find_element(By.CLASS_NAME, 'item-title')
+                    current_last_text = last_title.get_attribute('innerText')
 
-            last = list_items[-1]
-            self.driver.execute_script("arguments[0].scrollIntoView();", last)
-            time.sleep(1)
+                if not list_items or current_last_text == last_text:
+                    # We've reached the end
+                    break
+
+                last_text = current_last_text
+                scroll_count += 1
+                if scroll_count >= max_scrolls:
+                    break
+                self.driver.execute_script("arguments[0].scrollIntoView();", list_items[-1])
+                time.sleep(1)
+            except StaleElementReferenceException:
+                time.sleep(1)
+                continue
 
         return None
 

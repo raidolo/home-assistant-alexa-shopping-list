@@ -42,8 +42,8 @@ jobs:
           context: ./server/
           push: true
           tags: |
-            madmachinations/ha-alexa-shopping-list-sync:${{ env.IMAGE_VERSION }}
-            madmachinations/ha-alexa-shopping-list-sync:latest
+            raidolo/ha-alexa-shopping-list-sync:${{ env.IMAGE_VERSION }}
+            raidolo/ha-alexa-shopping-list-sync:latest
   
 
   release:
@@ -57,12 +57,26 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v3
 
+      - name: Extract changelog and stamp version
+        run: |
+          BODY=$(sed -n '/<!-- RELEASE START -->/,/<!-- RELEASE END -->/p' CHANGELOG.md | sed '1d;$d')
+          BODY=$(echo "$BODY" | sed "s/## \[Unreleased\]/## [${{ env.IMAGE_VERSION }}]/")
+          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+          echo "$BODY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          sed -i "s/## \[Unreleased\]/## [${{ env.IMAGE_VERSION }}] - $(date +\"%Y-%m-%d\")/" CHANGELOG.md
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "Stamp changelog for version ${{ env.IMAGE_VERSION }}" || true
+          git push origin main || true
+
       - name: Create a tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ secrets.GITHUB_TOKEN }}
-          git push origin ${{ secrets.GITHUB_TOKEN }}
+          git tag ${{ env.IMAGE_VERSION }}
+          git push origin ${{ env.IMAGE_VERSION }}
 
       - name: Create a Release
         uses: actions/create-release@v1
@@ -70,8 +84,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ env.IMAGE_VERSION }}
-          release_name: ${{ env.IMAGE_VERSION }}
-          body: "Automated release for version ${{ env.IMAGE_VERSION }}"
+          release_name: v${{ env.IMAGE_VERSION }}
+          body: ${{ env.RELEASE_BODY }}
           draft: false
           prerelease: false
   
@@ -81,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: release
     env:
-      REPO_NAME: madmachinations/home-assistant-alexa-shopping-list-hass
+      REPO_NAME: raidolo/home-assistant-alexa-shopping-list-hass
       FILE_PATH: alexa_shopping_list/config.yaml
     steps:
       - name: Set version

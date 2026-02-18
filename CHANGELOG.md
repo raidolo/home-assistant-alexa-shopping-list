@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 <!-- RELEASE START -->
-## [2602.049.22] - "2026-02-18"
+## [Unreleased]
 
 ### Critical Fixes
 - **Fixed `_do_sync()` crash** — `loop` variable was defined in `sync()` but never passed to `_do_sync()`, causing `NameError` and breaking shopping list synchronization
@@ -27,6 +27,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Added proper logging** — Server uses Python `logging` module for error reporting
 
 ### CI/CD
-- **Fixed tag creation bug** — `git tag` was using `secrets.GITHUB_TOKEN` as tag name instead of version
+- **Tag-based releases** — Workflow only triggers on version tags, not every push to main
 - **Updated Docker Hub and addon repo references**
+- **Added `workflow_dispatch` trigger** — Allows manual workflow runs from GitHub UI
 <!-- RELEASE END -->
+
+## [2602.050.00] - 2026-02-19
+
+First release from raidolo fork.

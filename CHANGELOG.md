@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 <!-- RELEASE START -->
-## [Unreleased]
+## [2602.049.22] - "2026-02-18"
 
 ### Critical Fixes
 - **Fixed `_do_sync()` crash** — `loop` variable was defined in `sync()` but never passed to `_do_sync()`, causing `NameError` and breaking shopping list synchronization

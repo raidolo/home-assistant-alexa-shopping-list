@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 <!-- RELEASE START -->
+## [2602.050.01] - 2026-02-19
+
+### CI/CD
+- **Fixed HASS addon publish step** — `git commit` no longer fails when version is already up to date
+<!-- RELEASE END -->
+
 ## [2602.050.00] - 2026-02-19
 
 ### Critical Fixes

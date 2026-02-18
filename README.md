@@ -1,5 +1,7 @@
 # Alexa Shopping List to Home Assistant Synchroniser
 
+> **Fork Notice**: This is a fork of the original project by [madmachinations](https://github.com/madmachinations/home-assistant-alexa-shopping-list). A huge thanks to them for building this integration! This fork includes critical bug fixes, improved scraping robustness, and CI/CD updates.
+
 This is a custom component for Home Assistant, which allows you to synchronise your Alexa Shopping List with the Home Assistant shopping list.
 
 **This works even though they cut off third party access to the shopping lists in Summer 2024**
@@ -29,25 +31,29 @@ This is the part you add to your Home Assistant installation. It talks with the 
 
 You can find the installation guide on the wiki here:
 
-https://github.com/madmachinations/home-assistant-alexa-shopping-list/wiki/Installation
+https://github.com/raidolo/home-assistant-alexa-shopping-list/wiki/Installation
 
 ## Setting up a development environment
 
 You can find the development environment setup guide on the wiki here:
 
-https://github.com/madmachinations/home-assistant-alexa-shopping-list/wiki/Development-environment
+https://github.com/raidolo/home-assistant-alexa-shopping-list/wiki/Development-environment
 
 ## Troubleshooting and help
 
 If you get stuck or hit a problem, please read the troubleshooting steps first:
 
-https://github.com/madmachinations/home-assistant-alexa-shopping-list/wiki/Troubleshooting-and-help
+https://github.com/raidolo/home-assistant-alexa-shopping-list/wiki/Troubleshooting-and-help
 
 
 ## Help out
 
 I would appreciate any help from anyone for testing and further development on various fixes and improvements.
 
-If you are not technical, there are other ways to help. Such as identifying duplicate issues, or helping other people in the community support discussion board here:
+If you are not technical, there are other ways to help, such as identifying duplicate issues or helping other people.
 
-https://github.com/madmachinations/home-assistant-alexa-shopping-list/discussions/categories/community-support
+> **Note**: The community support discussion board is not currently active, but may be enabled in the future if needed.
+
+## Credits
+
+This project is based on the work of [madmachinations](https://github.com/madmachinations). The original repository can be found [here](https://github.com/madmachinations/home-assistant-alexa-shopping-list). Thank you for creating and maintaining this integration!

@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2603.090.04] - 2026-03-31
+
+### Features
+- **Bidirectional completion sync** - The Home Assistant component now treats items that disappear from the Alexa active list as completed remotely and keeps them completed in Home Assistant instead of re-adding them to Amazon.
+
+### Improvements
+- **Alexa checkbox completion** - Home Assistant completions now use the Alexa shopping list completion control instead of deleting items outright, preserving Amazon's completed-items behavior.
+- **Sync state snapshot** - Added a lightweight local sync metadata snapshot so the integration can detect recent removals from Alexa's active list between sync runs.
+
 ## [2603.090.03] - 2026-03-31
 
 ### Bug Fixes

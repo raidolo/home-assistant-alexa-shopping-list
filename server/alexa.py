@@ -7,7 +7,7 @@ from selenium.webdriver.common.actions.wheel_input import ScrollOrigin
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException, TimeoutException
 import time
 import json
 import os
@@ -447,6 +447,41 @@ class AlexaShoppingList:
         return None
 
 
+    def _find_completion_toggle(self, element):
+        checkbox = element.find_element(By.CSS_SELECTOR, ".checkBox input[type='checkbox']")
+        checkbox_id = checkbox.get_attribute('id')
+
+        if checkbox_id:
+            labels = element.find_elements(By.CSS_SELECTOR, f"label[for='{checkbox_id}']")
+            if len(labels) > 0:
+                return labels[0]
+
+        return checkbox
+
+
+    def complete_alexa_list_item(self, item: str):
+        return self._complete_alexa_list_item(item, refresh_result=True)
+
+
+    def _complete_alexa_list_item(self, item: str, refresh_result: bool = True, ensure_page_ready: bool = True):
+        if ensure_page_ready:
+            self._prepare_alexa_list_page(False)
+
+        element = self._get_alexa_list_item_element(item, ensure_page_ready=False)
+        if element is None:
+            if refresh_result:
+                return self.get_alexa_list(False)
+            return None
+
+        toggle = self._find_completion_toggle(element)
+        self.driver.execute_script("arguments[0].click();", toggle)
+        self._wait_for_element_staleness(element)
+
+        if refresh_result:
+            return self.get_alexa_list(False)
+        return None
+
+
     def add_alexa_list_item(self, item: str):
         return self._add_alexa_list_item(item, refresh_result=True)
 
@@ -542,10 +577,11 @@ class AlexaShoppingList:
         return None
 
 
-    def bulk_apply_alexa_list_changes(self, add_items=None, remove_items=None, update_items=None):
+    def bulk_apply_alexa_list_changes(self, add_items=None, remove_items=None, update_items=None, complete_items=None):
         add_items = add_items or []
         remove_items = remove_items or []
         update_items = update_items or []
+        complete_items = complete_items or []
 
         self._prepare_alexa_list_page(False)
 
@@ -557,6 +593,9 @@ class AlexaShoppingList:
 
         for update in update_items:
             self._update_alexa_list_item(update['old'], update['new'], refresh_result=False, ensure_page_ready=False)
+
+        for item in complete_items:
+            self._complete_alexa_list_item(item, refresh_result=False, ensure_page_ready=False)
 
         return self.get_alexa_list(False)
 

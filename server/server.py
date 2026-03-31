@@ -254,6 +254,26 @@ async def _cmd_get_remove_shopping_list_item(args):
     return result
 
 
+async def _cmd_get_complete_shopping_list_item(args):
+    try:
+        instance = _start_alexa()
+        requires_login = await asyncio.to_thread(instance.requires_login)
+        if requires_login:
+            result = None, "Not authenticated"
+        else:
+            result = await asyncio.to_thread(instance.complete_alexa_list_item, args['item']), None
+    except NotAuthenticatedError as e:
+        logger.warning(f"Session expired during complete_item: {e}")
+        _set_config_value("auth_checked_time", 0)
+        result = None, "Not authenticated"
+    except Exception as e:
+        logger.error(f"Error completing item: {e}", exc_info=True)
+        result = None, f"Server error: {e}"
+    finally:
+        _stop_alexa()
+    return result
+
+
 async def _cmd_bulk_apply_shopping_list_changes(args):
     try:
         instance = _start_alexa()
@@ -265,7 +285,8 @@ async def _cmd_bulk_apply_shopping_list_changes(args):
                 instance.bulk_apply_alexa_list_changes,
                 add_items=args.get('add_items', []),
                 remove_items=args.get('remove_items', []),
-                update_items=args.get('update_items', [])
+                update_items=args.get('update_items', []),
+                complete_items=args.get('complete_items', [])
             ), None
     except NotAuthenticatedError as e:
         logger.warning(f"Session expired during bulk_apply_changes: {e}")
@@ -309,6 +330,8 @@ async def _route_command(command, arguments={}):
         return await _cmd_get_update_shopping_list_item(arguments)
     if command == "remove_item":
         return await _cmd_get_remove_shopping_list_item(arguments)
+    if command == "complete_item":
+        return await _cmd_get_complete_shopping_list_item(arguments)
     if command == "bulk_apply_changes":
         return await _cmd_bulk_apply_shopping_list_changes(arguments)
     

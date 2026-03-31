@@ -15,6 +15,7 @@ class AlexaShoppingListSync:
     def __init__(self, ip="localhost", port=4000, sync_mins=60, hasl_path=None, hasl_refresh=None):
         self.uri = "ws://"+ip+":"+str(port)
         self._hasl_path = hasl_path
+        self._metadata_path = f"{hasl_path}.alexa_sync_meta.json" if hasl_path else None
         self._hasl_refresh = hasl_refresh
         self._setup_cached_list(sync_mins * 60)
         self._sync_lock = asyncio.Lock()
@@ -129,7 +130,7 @@ class AlexaShoppingListSync:
     # Commands
 
 
-    async def _get_list(self, force = False):
+    async def _get_list(self, force=False):
         if self._cached_list_needs_updating() or force:
             response = await self._send_command("get_list")
             if self._command_successful(response):
@@ -160,12 +161,20 @@ class AlexaShoppingListSync:
         return self._cached_list
 
 
-    async def _bulk_apply_changes(self, add_items=None, remove_items=None, update_items=None):
+    async def _complete_item(self, item):
+        response = await self._send_command("complete_item", item=item)
+        if self._command_successful(response):
+            self._update_cached_list(self._command_result(response))
+        return self._cached_list
+
+
+    async def _bulk_apply_changes(self, add_items=None, remove_items=None, update_items=None, complete_items=None):
         response = await self._send_command(
             "bulk_apply_changes",
             add_items=add_items or [],
             remove_items=remove_items or [],
-            update_items=update_items or []
+            update_items=update_items or [],
+            complete_items=complete_items or []
         )
         if self._command_successful(response):
             self._update_cached_list(self._command_result(response))
@@ -179,14 +188,29 @@ class AlexaShoppingListSync:
         await self.sync(None, True)
     
 
+    def _build_item_id(self, item_name):
+        return hashlib.md5(item_name.encode('utf-8')).hexdigest()[:12]
+
+
+    def _default_ha_item(self, item_name, complete=False):
+        return {
+            "id": self._build_item_id(item_name),
+            "name": item_name,
+            "complete": complete
+        }
+
+
     def _export_ha_shopping_list(self, items):
         export = []
         for item in items:
-            export.append({
-                "id": hashlib.md5(item.encode('utf-8')).hexdigest()[:12],
-                "name": item,
-                "complete": False
-            })
+            if isinstance(item, dict):
+                export.append({
+                    "id": item.get("id") or self._build_item_id(item["name"]),
+                    "name": item["name"],
+                    "complete": bool(item.get("complete", False))
+                })
+            else:
+                export.append(self._default_ha_item(item))
         
         with open(self._hasl_path, "w") as outfile:
             outfile.write(json.dumps(export, indent=4))
@@ -204,11 +228,79 @@ class AlexaShoppingListSync:
         return hashlib.md5(serialized.encode('utf-8')).hexdigest()
     
 
+    def _read_sync_metadata(self):
+        if self._metadata_path and os.path.exists(self._metadata_path):
+            with open(self._metadata_path, 'r') as file:
+                data = json.load(file)
+                if isinstance(data, dict):
+                    return data
+        return {}
+
+
+    def _write_sync_metadata(self, metadata):
+        if self._metadata_path is None:
+            return
+        with open(self._metadata_path, "w") as outfile:
+            outfile.write(json.dumps(metadata, indent=4, sort_keys=True))
+
+
+    def _get_previous_alexa_items(self):
+        metadata = self._read_sync_metadata()
+        items = metadata.get("last_alexa_items", [])
+        if isinstance(items, list):
+            return items
+        return []
+
+
+    def _set_previous_alexa_items(self, items):
+        self._write_sync_metadata({
+            "last_alexa_items": items
+        })
+
+
     def _find_ha_list_item(self, find, ha_list):
         for item in ha_list:
             if item['name'] == find:
                 return item
         return None
+
+
+    def _mark_items_completed(self, ha_list, item_names):
+        changed = False
+        for item_name in item_names:
+            item = self._find_ha_list_item(item_name, ha_list)
+            if item is not None and item.get('complete') != True:
+                item['complete'] = True
+                changed = True
+        return changed
+
+
+    def _merge_ha_with_alexa(self, ha_list, alexa_items):
+        merged = []
+        seen_names = set()
+
+        for item_name in alexa_items:
+            existing = self._find_ha_list_item(item_name, ha_list)
+            if existing is None:
+                merged.append(self._default_ha_item(item_name, complete=False))
+            else:
+                merged.append({
+                    "id": existing.get("id") or self._build_item_id(item_name),
+                    "name": item_name,
+                    "complete": False
+                })
+            seen_names.add(item_name)
+
+        for item in ha_list:
+            if item['name'] in seen_names:
+                continue
+            merged.append({
+                "id": item.get("id") or self._build_item_id(item["name"]),
+                "name": item["name"],
+                "complete": bool(item.get("complete", False))
+            })
+
+        return merged
     
 
     async def _debug_log_entry(self, logger=None, entry=""):
@@ -221,37 +313,53 @@ class AlexaShoppingListSync:
 
         ha_list = await loop.run_in_executor(None, self._read_ha_shopping_list)
         original_ha_list_hash = await loop.run_in_executor(None, self._ha_shopping_list_hash)
+        previous_alexa_list = await loop.run_in_executor(None, self._get_previous_alexa_items)
         
         await self._debug_log_entry(logger, "Loading Alexa shopping list")
         alexa_list = await self._get_list(force)
         await self._debug_log_entry(logger, "Alexa list: "+json.dumps(alexa_list))
+        await self._debug_log_entry(logger, "Previous Alexa list: "+json.dumps(previous_alexa_list))
+
+        if len(previous_alexa_list) > 0:
+            alexa_completed_in_remote = [
+                item_name for item_name in previous_alexa_list
+                if item_name not in alexa_list
+            ]
+            if self._mark_items_completed(ha_list, alexa_completed_in_remote):
+                await self._debug_log_entry(
+                    logger,
+                    "Marked HA items as completed from Alexa removals: "+json.dumps(alexa_completed_in_remote)
+                )
 
         to_add = []
-        to_remove = []
+        to_complete = []
 
         for item in ha_list:
             if item['complete'] == True:
                 if item['name'] in alexa_list:
-                    to_remove.append(item['name'])
-                
+                    to_complete.append(item['name'])
+                continue
+
             if item['name'] not in alexa_list:
                 to_add.append(item['name'])
 
         await self._debug_log_entry(logger, "To add to alexa: "+json.dumps(to_add))
-        await self._debug_log_entry(logger, "To remove from alexa: "+json.dumps(to_remove))
-        if len(to_add) + len(to_remove) > 1:
+        await self._debug_log_entry(logger, "To complete on alexa: "+json.dumps(to_complete))
+        if len(to_add) + len(to_complete) > 1:
             await self._debug_log_entry(logger, "Applying Alexa changes in bulk")
-            await self._bulk_apply_changes(add_items=to_add, remove_items=to_remove)
+            await self._bulk_apply_changes(add_items=to_add, complete_items=to_complete)
         else:
             for item in to_add:
                 await self._add_item(item)
-            for item in to_remove:
-                await self._remove_item(item)
+            for item in to_complete:
+                await self._complete_item(item)
         
         refreshed_items = await self._get_list()
         await self._debug_log_entry(logger, "Refreshed Alexa list: "+json.dumps(refreshed_items))
         await self._debug_log_entry(logger, "Exporting new HA shopping list")
-        await loop.run_in_executor(None, self._export_ha_shopping_list, refreshed_items)
+        merged_ha_list = await loop.run_in_executor(None, self._merge_ha_with_alexa, ha_list, refreshed_items)
+        await loop.run_in_executor(None, self._export_ha_shopping_list, merged_ha_list)
+        await loop.run_in_executor(None, self._set_previous_alexa_items, refreshed_items)
         await self._hasl_refresh()
 
 
@@ -289,4 +397,3 @@ class AlexaShoppingListSync:
 
         return result
     # ============================================================
-

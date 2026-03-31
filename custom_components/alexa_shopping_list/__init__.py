@@ -12,6 +12,7 @@ DOMAIN = "alexa_shopping_list"
 CONF_IP = "server_ip"
 CONF_PORT = "server_port"
 CONF_SYNC_MINS = "sync_mins"
+CONF_SKIP_INITIAL_SYNC = "skip_initial_sync"
 
 SERVICE_SYNC = "sync_alexa_shopping_list"
 

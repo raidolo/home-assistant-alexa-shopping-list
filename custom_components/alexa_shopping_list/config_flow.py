@@ -13,7 +13,7 @@ import homeassistant.helpers.config_validation as cv
 
 from .asl import AlexaShoppingListSync
 
-from . import DOMAIN, CONF_IP, CONF_PORT, CONF_SYNC_MINS
+from . import DOMAIN, CONF_IP, CONF_PORT, CONF_SYNC_MINS, CONF_SKIP_INITIAL_SYNC
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,6 +22,10 @@ class AlexaShoppingListConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle config flow."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(config_entry):
+        return AlexaShoppingListOptionsFlow(config_entry)
 
     def __init__(self) -> None:
         self.config_data = {}
@@ -37,6 +41,8 @@ class AlexaShoppingListConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_IP: self.config_data[CONF_IP],
             CONF_PORT: self.config_data[CONF_PORT],
             CONF_SYNC_MINS: self.config_data[CONF_SYNC_MINS],
+        }, options={
+            CONF_SKIP_INITIAL_SYNC: False,
         })
     
 
@@ -83,3 +89,25 @@ class AlexaShoppingListConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="sync_mins", data_schema=vol.Schema({
             vol.Required(CONF_SYNC_MINS, default="60"): cv.string,
         }), errors=errors)
+
+class AlexaShoppingListOptionsFlow(config_entries.OptionsFlow):
+    """Handle Alexa Shopping List options."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        if user_input is not None:
+            return self.async_create_entry(title="", data={
+                CONF_SKIP_INITIAL_SYNC: user_input.get(CONF_SKIP_INITIAL_SYNC, False),
+            })
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Required(
+                    CONF_SKIP_INITIAL_SYNC,
+                    default=self.config_entry.options.get(CONF_SKIP_INITIAL_SYNC, False),
+                ): bool,
+            }),
+        )

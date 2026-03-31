@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2603.090.09] - 2026-03-31
+
+### Features
+- **Startup sync control** - Added a new integration option to skip the first automatic Alexa shopping list sync after Home Assistant startup.
+
+### Improvements
+- **Configurable after setup** - The new startup-sync behavior is exposed through the integration options flow, so it can be enabled or disabled even after the integration has already been added.
+
 ## [2603.090.08] - 2026-03-31
 
 ### Features

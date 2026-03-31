@@ -25,5 +25,17 @@
             }
 
         }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "data": {
+                    "skip_initial_sync": "Skip initial sync after startup"
+                },
+                "description": "If enabled, the first automatic sync after Home Assistant startup is skipped. Manual syncs and later automatic syncs still work normally.",
+                "title": "Options"
+            }
+
+        }
     }
 }

@@ -9,7 +9,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.components import persistent_notification
 
-from . import DOMAIN
+from . import DOMAIN, CONF_SKIP_INITIAL_SYNC
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     alexa = hass.data[DOMAIN][config_entry.entry_id]
 
-    update_sensor = AlexaShoppingListSyncSensor(hass, alexa)
+    update_sensor = AlexaShoppingListSyncSensor(hass, alexa, config_entry)
 
     async_add_entities([update_sensor], update_before_add=True)
 
@@ -27,9 +27,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 class AlexaShoppingListSyncSensor(SensorEntity):
     """Synchronise HA and Alexa shopping lists"""
 
-    def __init__(self, hass, alexa):
+    def __init__(self, hass, alexa, config_entry):
         self.hass = hass
         self.alexa = alexa
+        self.config_entry = config_entry
+        self._skip_initial_sync_pending = True
 
         self._attr_name = "Alexa Shopping List Sync"
         self._attr_icon = "mdi:sync"
@@ -39,6 +41,11 @@ class AlexaShoppingListSyncSensor(SensorEntity):
 
     async def async_update(self) -> None:
         try:
+            if self._skip_initial_sync_pending:
+                self._skip_initial_sync_pending = False
+                if self.config_entry.options.get(CONF_SKIP_INITIAL_SYNC, False):
+                    _LOGGER.debug("Skipping initial Alexa shopping list sync due to integration option")
+                    return
 
             updated = await self.alexa.sync(_LOGGER)
             if updated == True:

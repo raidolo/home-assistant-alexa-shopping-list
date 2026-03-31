@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2603.090.08] - 2026-03-31
+
+### Features
+- **HA rename sync support** - Added support for item renames from Home Assistant to Alexa by tracking stable Home Assistant item IDs across sync snapshots and converting local name changes into Alexa update operations.
+
+### Improvements
+- **HA-style item IDs** - New Home Assistant shopping list items created by the sync now use UUID hex identifiers compatible with Home Assistant's native item format instead of name-derived short hashes.
+- **Safer local change detection** - The sync now keeps enough Home Assistant snapshot context to distinguish a real local rename from unrelated bidirectional list changes.
+
 ## [2603.090.07] - 2026-03-31
 
 ### Bug Fixes

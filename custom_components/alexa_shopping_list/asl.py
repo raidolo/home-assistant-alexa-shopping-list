@@ -6,6 +6,7 @@ import datetime
 import os
 import asyncio
 import hashlib
+import uuid
 
 # ============================================================
 
@@ -189,7 +190,7 @@ class AlexaShoppingListSync:
     
 
     def _build_item_id(self, item_name):
-        return hashlib.md5(item_name.encode('utf-8')).hexdigest()[:12]
+        return uuid.uuid4().hex
 
 
     def _default_ha_item(self, item_name, complete=False):
@@ -272,6 +273,46 @@ class AlexaShoppingListSync:
             if item['name'] == find:
                 return item
         return None
+
+
+    def _find_ha_list_item_by_id(self, item_id, ha_list):
+        for item in ha_list:
+            if item.get('id') == item_id:
+                return item
+        return None
+
+
+    def _collect_local_updates(self, ha_list, previous_ha_list, alexa_list):
+        updates = []
+
+        for item in ha_list:
+            item_id = item.get('id')
+            if not item_id or item.get('complete') == True:
+                continue
+
+            previous_item = self._find_ha_list_item_by_id(item_id, previous_ha_list)
+            if previous_item is None:
+                continue
+
+            old_name = previous_item.get('name')
+            new_name = item.get('name')
+
+            if not old_name or not new_name or old_name == new_name:
+                continue
+
+            if previous_item.get('complete') == True:
+                continue
+
+            if old_name not in alexa_list:
+                continue
+
+            updates.append({
+                'old': old_name,
+                'new': new_name,
+                'id': item_id
+            })
+
+        return updates
 
 
     def _mark_items_completed(self, ha_list, item_names):
@@ -371,10 +412,17 @@ class AlexaShoppingListSync:
                 "Marked HA items as incomplete from Alexa active list: "+json.dumps(alexa_reopened_in_remote)
             )
 
+        update_items = self._collect_local_updates(ha_list, previous_ha_list, alexa_list)
+        updated_new_names = {update['new'] for update in update_items}
+        await self._debug_log_entry(logger, "To update on alexa: "+json.dumps(update_items))
+
         to_add = []
         to_complete = []
 
         for item in ha_list:
+            if item['name'] in updated_new_names:
+                continue
+
             if item['complete'] == True:
                 if item['name'] in alexa_list:
                     to_complete.append(item['name'])
@@ -385,10 +433,12 @@ class AlexaShoppingListSync:
 
         await self._debug_log_entry(logger, "To add to alexa: "+json.dumps(to_add))
         await self._debug_log_entry(logger, "To complete on alexa: "+json.dumps(to_complete))
-        if len(to_add) + len(to_complete) > 1:
+        if len(to_add) + len(to_complete) + len(update_items) > 1:
             await self._debug_log_entry(logger, "Applying Alexa changes in bulk")
-            await self._bulk_apply_changes(add_items=to_add, complete_items=to_complete)
+            await self._bulk_apply_changes(add_items=to_add, update_items=update_items, complete_items=to_complete)
         else:
+            for update in update_items:
+                await self._update_item(update['old'], update['new'])
             for item in to_add:
                 await self._add_item(item)
             for item in to_complete:

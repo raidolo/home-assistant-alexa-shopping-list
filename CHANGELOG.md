@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2603.090.05] - 2026-03-31
+
+### Bug Fixes
+- **Alexa re-add reopening** - Fixed a bidirectional sync regression where an item completed in Home Assistant could be immediately re-completed on the next sync even after being re-added to Alexa. Items that newly reappear in Alexa's active list now reopen in Home Assistant instead.
+
 ## [2603.090.04] - 2026-03-31
 
 ### Features

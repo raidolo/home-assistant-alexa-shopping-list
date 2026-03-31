@@ -275,6 +275,16 @@ class AlexaShoppingListSync:
         return changed
 
 
+    def _mark_items_incomplete(self, ha_list, item_names):
+        changed = False
+        for item_name in item_names:
+            item = self._find_ha_list_item(item_name, ha_list)
+            if item is not None and item.get('complete') == True:
+                item['complete'] = False
+                changed = True
+        return changed
+
+
     def _merge_ha_with_alexa(self, ha_list, alexa_items):
         merged = []
         seen_names = set()
@@ -329,6 +339,16 @@ class AlexaShoppingListSync:
                 await self._debug_log_entry(
                     logger,
                     "Marked HA items as completed from Alexa removals: "+json.dumps(alexa_completed_in_remote)
+                )
+
+            alexa_reopened_in_remote = [
+                item_name for item_name in alexa_list
+                if item_name not in previous_alexa_list
+            ]
+            if self._mark_items_incomplete(ha_list, alexa_reopened_in_remote):
+                await self._debug_log_entry(
+                    logger,
+                    "Marked HA items as incomplete from Alexa re-adds: "+json.dumps(alexa_reopened_in_remote)
                 )
 
         to_add = []

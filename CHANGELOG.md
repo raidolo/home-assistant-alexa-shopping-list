@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2603.090.07] - 2026-03-31
+
+### Bug Fixes
+- **Local HA completion precedence** - Fixed a bidirectional sync edge case where an item reopened from Alexa could no longer be completed back to Amazon from Home Assistant. The sync now tracks the last exported HA state so a new local completion wins over automatic remote reopen handling.
+
 ## [2603.090.06] - 2026-03-31
 
 ### Bug Fixes

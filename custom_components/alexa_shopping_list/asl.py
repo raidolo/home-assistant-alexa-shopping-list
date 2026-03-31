@@ -252,9 +252,18 @@ class AlexaShoppingListSync:
         return []
 
 
-    def _set_previous_alexa_items(self, items):
+    def _get_previous_ha_items(self):
+        metadata = self._read_sync_metadata()
+        items = metadata.get("last_ha_items", [])
+        if isinstance(items, list):
+            return items
+        return []
+
+
+    def _set_sync_snapshot(self, alexa_items, ha_items):
         self._write_sync_metadata({
-            "last_alexa_items": items
+            "last_alexa_items": alexa_items,
+            "last_ha_items": ha_items
         })
 
 
@@ -275,13 +284,22 @@ class AlexaShoppingListSync:
         return changed
 
 
-    def _mark_items_incomplete(self, ha_list, item_names):
+    def _mark_items_incomplete(self, ha_list, item_names, previous_ha_list=None):
         changed = False
+        previous_ha_list = previous_ha_list or []
+
         for item_name in item_names:
             item = self._find_ha_list_item(item_name, ha_list)
-            if item is not None and item.get('complete') == True:
-                item['complete'] = False
-                changed = True
+            if item is None or item.get('complete') != True:
+                continue
+
+            previous_item = self._find_ha_list_item(item_name, previous_ha_list)
+            if previous_item is not None and previous_item.get('complete') == False:
+                # HA changed this item to completed after the last sync; keep that local intent.
+                continue
+
+            item['complete'] = False
+            changed = True
         return changed
 
 
@@ -324,11 +342,13 @@ class AlexaShoppingListSync:
         ha_list = await loop.run_in_executor(None, self._read_ha_shopping_list)
         original_ha_list_hash = await loop.run_in_executor(None, self._ha_shopping_list_hash)
         previous_alexa_list = await loop.run_in_executor(None, self._get_previous_alexa_items)
+        previous_ha_list = await loop.run_in_executor(None, self._get_previous_ha_items)
         
         await self._debug_log_entry(logger, "Loading Alexa shopping list")
         alexa_list = await self._get_list(force)
         await self._debug_log_entry(logger, "Alexa list: "+json.dumps(alexa_list))
         await self._debug_log_entry(logger, "Previous Alexa list: "+json.dumps(previous_alexa_list))
+        await self._debug_log_entry(logger, "Previous HA list: "+json.dumps(previous_ha_list))
 
         if len(previous_alexa_list) > 0:
             alexa_completed_in_remote = [
@@ -345,7 +365,7 @@ class AlexaShoppingListSync:
             item_name for item_name in alexa_list
             if self._find_ha_list_item(item_name, ha_list) is not None
         ]
-        if self._mark_items_incomplete(ha_list, alexa_reopened_in_remote):
+        if self._mark_items_incomplete(ha_list, alexa_reopened_in_remote, previous_ha_list):
             await self._debug_log_entry(
                 logger,
                 "Marked HA items as incomplete from Alexa active list: "+json.dumps(alexa_reopened_in_remote)
@@ -379,7 +399,7 @@ class AlexaShoppingListSync:
         await self._debug_log_entry(logger, "Exporting new HA shopping list")
         merged_ha_list = await loop.run_in_executor(None, self._merge_ha_with_alexa, ha_list, refreshed_items)
         await loop.run_in_executor(None, self._export_ha_shopping_list, merged_ha_list)
-        await loop.run_in_executor(None, self._set_previous_alexa_items, refreshed_items)
+        await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_items, merged_ha_list)
         await self._hasl_refresh()
 
 

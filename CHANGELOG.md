@@ -7,11 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [2603.090.08] - 2026-03-31
 
 ### Features
+- **🎉 Major bidirectional sync upgrade** - Alexa Shopping List Sync now delivers a much more complete two-way sync experience between Amazon Alexa and Home Assistant, making the shopping list feel far closer to a truly shared list across both platforms.
 - **HA rename sync support** - Added support for item renames from Home Assistant to Alexa by tracking stable Home Assistant item IDs across sync snapshots and converting local name changes into Alexa update operations.
 
 ### Improvements
 - **HA-style item IDs** - New Home Assistant shopping list items created by the sync now use UUID hex identifiers compatible with Home Assistant's native item format instead of name-derived short hashes.
 - **Safer local change detection** - The sync now keeps enough Home Assistant snapshot context to distinguish a real local rename from unrelated bidirectional list changes.
+- **Completion sync reliability** - The bidirectional sync flow now behaves much more predictably across add, complete, reopen, and rename scenarios, reducing the chance of items bouncing unexpectedly between Home Assistant and Alexa.
+
 
 ## [2603.090.07] - 2026-03-31
 

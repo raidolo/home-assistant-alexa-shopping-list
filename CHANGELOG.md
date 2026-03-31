@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2603.090.06] - 2026-03-31
+
+### Bug Fixes
+- **Alexa reopen after empty snapshot** - Fixed a follow-up bidirectional sync edge case where an item re-added to Alexa could still be completed again if the previous Alexa snapshot was empty. Active Alexa items now always reopen matching completed items in Home Assistant before completion decisions are made.
+
 ## [2603.090.05] - 2026-03-31
 
 ### Bug Fixes

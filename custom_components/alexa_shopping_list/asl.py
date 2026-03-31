@@ -341,15 +341,15 @@ class AlexaShoppingListSync:
                     "Marked HA items as completed from Alexa removals: "+json.dumps(alexa_completed_in_remote)
                 )
 
-            alexa_reopened_in_remote = [
-                item_name for item_name in alexa_list
-                if item_name not in previous_alexa_list
-            ]
-            if self._mark_items_incomplete(ha_list, alexa_reopened_in_remote):
-                await self._debug_log_entry(
-                    logger,
-                    "Marked HA items as incomplete from Alexa re-adds: "+json.dumps(alexa_reopened_in_remote)
-                )
+        alexa_reopened_in_remote = [
+            item_name for item_name in alexa_list
+            if self._find_ha_list_item(item_name, ha_list) is not None
+        ]
+        if self._mark_items_incomplete(ha_list, alexa_reopened_in_remote):
+            await self._debug_log_entry(
+                logger,
+                "Marked HA items as incomplete from Alexa active list: "+json.dumps(alexa_reopened_in_remote)
+            )
 
         to_add = []
         to_complete = []

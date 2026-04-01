@@ -622,6 +622,14 @@ class AlexaShoppingListSync:
     def _mark_items_incomplete(self, ha_list, item_names, previous_ha_list=None):
         changed = False
         previous_ha_list = previous_ha_list or []
+        local_completed_counts = Counter()
+
+        for item in ha_list:
+            if item.get("complete") != True:
+                continue
+            previous_item = self._find_ha_list_item_by_id(item.get("id"), previous_ha_list)
+            if previous_item is not None and previous_item.get("complete") == False:
+                local_completed_counts[item["name"]] += 1
 
         for item_name, count in Counter(item_names).items():
             previous_open_count = len(self._find_ha_list_items(item_name, previous_ha_list, complete=False))
@@ -629,7 +637,11 @@ class AlexaShoppingListSync:
             if reopen_budget <= 0:
                 continue
 
-            for item in self._find_ha_list_items(item_name, ha_list, complete=True)[:reopen_budget]:
+            completed_items = self._find_ha_list_items(item_name, ha_list, complete=True)
+            protected_local_completions = min(local_completed_counts[item_name], len(completed_items))
+            reopen_candidates = completed_items[protected_local_completions:]
+
+            for item in reopen_candidates[:reopen_budget]:
                 item['complete'] = False
                 changed = True
         return changed

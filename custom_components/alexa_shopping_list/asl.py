@@ -13,6 +13,8 @@ import uuid
 
 class AlexaShoppingListSync:
 
+    COMPLETED_LEDGER_TTL_HOURS = 24
+
     def __init__(self, ip="localhost", port=4000, sync_mins=60, hasl_path=None, hasl_refresh=None):
         self.uri = "ws://"+ip+":"+str(port)
         self._hasl_path = hasl_path
@@ -201,6 +203,130 @@ class AlexaShoppingListSync:
             "Received Home Assistant shopping_list_updated event: %s",
             json.dumps(payload, sort_keys=True),
         )
+
+        self._handle_homeassistant_shopping_list_event(logger, payload.get("data") or {})
+
+
+    def _utcnow(self):
+        return datetime.datetime.now(datetime.timezone.utc)
+
+
+    def _parse_iso_datetime(self, value):
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=datetime.timezone.utc)
+            return parsed.astimezone(datetime.timezone.utc)
+        except ValueError:
+            return None
+
+
+    def _completed_ledger_cutoff(self):
+        return self._utcnow() - datetime.timedelta(hours=self.COMPLETED_LEDGER_TTL_HOURS)
+
+
+    def _prune_completed_ledger(self, ledger):
+        cutoff = self._completed_ledger_cutoff()
+        pruned = {}
+        for item_id, entry in ledger.items():
+            completed_at = self._parse_iso_datetime(entry.get("completed_at"))
+            if completed_at is None or completed_at >= cutoff:
+                pruned[item_id] = entry
+        return pruned
+
+
+    def _get_completed_ledger(self):
+        metadata = self._read_sync_metadata()
+        ledger = metadata.get("ha_completed_ledger", {})
+        if isinstance(ledger, dict):
+            return self._prune_completed_ledger(ledger)
+        return {}
+
+
+    def _set_completed_ledger(self, ledger):
+        metadata = self._read_sync_metadata()
+        metadata["ha_completed_ledger"] = self._prune_completed_ledger(ledger)
+        self._write_sync_metadata(metadata)
+
+
+    def _update_completed_ledger(self, update_callback):
+        ledger = self._get_completed_ledger()
+        update_callback(ledger)
+        self._set_completed_ledger(ledger)
+
+
+    def _mark_ledger_item_seen_on_alexa(self, ledger, item_name, alexa_items):
+        if item_name not in alexa_items:
+            return
+
+        for entry in ledger.values():
+            if entry.get("name") == item_name:
+                entry["seen_on_alexa"] = True
+
+
+    def _protected_alexa_items_from_ledger(self, ledger, alexa_items):
+        protected = []
+        for entry in ledger.values():
+            if not entry.get("removed_from_ha"):
+                continue
+            if not entry.get("seen_on_alexa"):
+                continue
+            item_name = entry.get("name")
+            if item_name and item_name in alexa_items:
+                protected.append(item_name)
+        return protected
+
+
+    def _handle_homeassistant_shopping_list_event(self, logger, data):
+        action = data.get("action")
+        item = data.get("item") or {}
+        item_id = item.get("id")
+        item_name = item.get("name")
+        item_complete = bool(item.get("complete", False))
+
+        def apply_update(ledger):
+            if action == "update" and item_id and item_complete:
+                ledger[item_id] = {
+                    "id": item_id,
+                    "name": item_name,
+                    "completed_at": self._utcnow().isoformat(),
+                    "removed_from_ha": False,
+                    "seen_on_alexa": False,
+                }
+                return
+
+            if action == "update" and item_id and not item_complete:
+                ledger.pop(item_id, None)
+                return
+
+            if action == "remove" and item_id and item_complete:
+                existing = ledger.get(item_id)
+                if existing is None:
+                    ledger[item_id] = {
+                        "id": item_id,
+                        "name": item_name,
+                        "completed_at": self._utcnow().isoformat(),
+                        "removed_from_ha": True,
+                        "seen_on_alexa": False,
+                    }
+                else:
+                    existing["name"] = item_name
+                    existing["removed_from_ha"] = True
+                return
+
+            if action == "clear":
+                for entry in ledger.values():
+                    entry["removed_from_ha"] = True
+
+        self._update_completed_ledger(apply_update)
+
+        if logger is not None:
+            logger.debug(
+                "Completed ledger after shopping_list_updated: %s",
+                json.dumps(self._get_completed_ledger(), sort_keys=True),
+            )
     
 
     def _build_item_id(self, item_name):
@@ -276,10 +402,10 @@ class AlexaShoppingListSync:
 
 
     def _set_sync_snapshot(self, alexa_items, ha_items):
-        self._write_sync_metadata({
-            "last_alexa_items": alexa_items,
-            "last_ha_items": ha_items
-        })
+        metadata = self._read_sync_metadata()
+        metadata["last_alexa_items"] = alexa_items
+        metadata["last_ha_items"] = ha_items
+        self._write_sync_metadata(metadata)
 
 
     def _find_ha_list_item(self, find, ha_list):
@@ -384,6 +510,16 @@ class AlexaShoppingListSync:
             })
 
         return merged
+
+
+    def _strip_names_from_ha_list(self, ha_list, item_names):
+        hidden_names = set(item_names)
+        return [item for item in ha_list if item.get("name") not in hidden_names]
+
+
+    def _filter_alexa_items(self, alexa_items, hidden_item_names):
+        hidden_names = set(hidden_item_names)
+        return [item_name for item_name in alexa_items if item_name not in hidden_names]
     
 
     async def _debug_log_entry(self, logger=None, entry=""):
@@ -398,12 +534,14 @@ class AlexaShoppingListSync:
         original_ha_list_hash = await loop.run_in_executor(None, self._ha_shopping_list_hash)
         previous_alexa_list = await loop.run_in_executor(None, self._get_previous_alexa_items)
         previous_ha_list = await loop.run_in_executor(None, self._get_previous_ha_items)
+        completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
         
         await self._debug_log_entry(logger, "Loading Alexa shopping list")
         alexa_list = await self._get_list(force)
         await self._debug_log_entry(logger, "Alexa list: "+json.dumps(alexa_list))
         await self._debug_log_entry(logger, "Previous Alexa list: "+json.dumps(previous_alexa_list))
         await self._debug_log_entry(logger, "Previous HA list: "+json.dumps(previous_ha_list))
+        await self._debug_log_entry(logger, "Completed ledger: "+json.dumps(completed_ledger))
 
         if len(previous_alexa_list) > 0:
             alexa_completed_in_remote = [
@@ -430,6 +568,20 @@ class AlexaShoppingListSync:
         updated_new_names = {update['new'] for update in update_items}
         await self._debug_log_entry(logger, "To update on alexa: "+json.dumps(update_items))
 
+        await loop.run_in_executor(None, self._update_completed_ledger, lambda ledger: [
+            self._mark_ledger_item_seen_on_alexa(ledger, item_name, previous_alexa_list)
+            for item_name in previous_alexa_list
+        ])
+        completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
+        protected_alexa_items = await loop.run_in_executor(
+            None, self._protected_alexa_items_from_ledger, completed_ledger, alexa_list
+        )
+        if protected_alexa_items:
+            await self._debug_log_entry(
+                logger,
+                "Protected Alexa items from HA completed ledger: "+json.dumps(protected_alexa_items)
+            )
+
         to_add = []
         to_complete = []
 
@@ -444,6 +596,14 @@ class AlexaShoppingListSync:
 
             if item['name'] not in alexa_list:
                 to_add.append(item['name'])
+
+        for item_name in protected_alexa_items:
+            if item_name not in to_complete:
+                to_complete.append(item_name)
+            if item_name in to_add:
+                to_add.remove(item_name)
+
+        filtered_ha_list = await loop.run_in_executor(None, self._strip_names_from_ha_list, ha_list, protected_alexa_items)
 
         await self._debug_log_entry(logger, "To add to alexa: "+json.dumps(to_add))
         await self._debug_log_entry(logger, "To complete on alexa: "+json.dumps(to_complete))
@@ -461,7 +621,21 @@ class AlexaShoppingListSync:
         refreshed_items = await self._get_list()
         await self._debug_log_entry(logger, "Refreshed Alexa list: "+json.dumps(refreshed_items))
         await self._debug_log_entry(logger, "Exporting new HA shopping list")
-        merged_ha_list = await loop.run_in_executor(None, self._merge_ha_with_alexa, ha_list, refreshed_items)
+        await loop.run_in_executor(None, self._update_completed_ledger, lambda ledger: [
+            self._mark_ledger_item_seen_on_alexa(ledger, item_name, refreshed_items)
+            for item_name in refreshed_items
+        ])
+        completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
+        protected_refreshed_items = await loop.run_in_executor(
+            None, self._protected_alexa_items_from_ledger, completed_ledger, refreshed_items
+        )
+        export_ha_list = await loop.run_in_executor(
+            None, self._strip_names_from_ha_list, filtered_ha_list, protected_refreshed_items
+        )
+        visible_refreshed_items = await loop.run_in_executor(
+            None, self._filter_alexa_items, refreshed_items, protected_refreshed_items
+        )
+        merged_ha_list = await loop.run_in_executor(None, self._merge_ha_with_alexa, export_ha_list, visible_refreshed_items)
         await loop.run_in_executor(None, self._export_ha_shopping_list, merged_ha_list)
         await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_items, merged_ha_list)
         await self._hasl_refresh()

@@ -641,6 +641,14 @@ class AlexaShoppingListSync:
         for item in ha_list:
             remaining_by_name[item["name"]].append(item)
 
+        for item_name, items in remaining_by_name.items():
+            # Prefer consuming already-active HA items for active Alexa matches,
+            # leaving completed items behind as completed history.
+            remaining_by_name[item_name] = sorted(
+                items,
+                key=lambda item: bool(item.get("complete", False))
+            )
+
         for item_name in alexa_items:
             existing_items = remaining_by_name.get(item_name, [])
             if len(existing_items) == 0:

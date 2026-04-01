@@ -341,13 +341,14 @@ class AlexaShoppingList:
                 if not found:
                     found.extend(current_visible)
                 else:
-                    overlap = 0
-                    max_overlap = min(len(previous_visible), len(current_visible))
-                    for candidate in range(max_overlap, 0, -1):
-                        if previous_visible[-candidate:] == current_visible[:candidate]:
-                            overlap = candidate
-                            break
-                    found.extend(current_visible[overlap:])
+                    previous_index = 0
+                    new_items = []
+                    for item_text in current_visible:
+                        if previous_index < len(previous_visible) and item_text == previous_visible[previous_index]:
+                            previous_index += 1
+                        else:
+                            new_items.append(item_text)
+                    found.extend(new_items)
 
                 if current_signature == previous_signature:
                     break

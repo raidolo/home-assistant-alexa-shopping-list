@@ -372,18 +372,23 @@ class AlexaShoppingListSync:
 
     def _read_sync_metadata(self):
         if self._metadata_path and os.path.exists(self._metadata_path):
-            with open(self._metadata_path, 'r') as file:
-                data = json.load(file)
-                if isinstance(data, dict):
-                    return data
+            try:
+                with open(self._metadata_path, 'r') as file:
+                    data = json.load(file)
+                    if isinstance(data, dict):
+                        return data
+            except (json.JSONDecodeError, OSError):
+                return {}
         return {}
 
 
     def _write_sync_metadata(self, metadata):
         if self._metadata_path is None:
             return
-        with open(self._metadata_path, "w") as outfile:
+        tmp_metadata_path = f"{self._metadata_path}.tmp"
+        with open(tmp_metadata_path, "w") as outfile:
             outfile.write(json.dumps(metadata, indent=4, sort_keys=True))
+        os.replace(tmp_metadata_path, self._metadata_path)
 
 
     def _get_previous_alexa_items(self):

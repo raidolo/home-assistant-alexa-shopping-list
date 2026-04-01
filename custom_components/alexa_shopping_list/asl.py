@@ -7,6 +7,7 @@ import os
 import asyncio
 import hashlib
 import uuid
+from collections import Counter, defaultdict
 
 # ============================================================
 
@@ -421,6 +422,17 @@ class AlexaShoppingListSync:
         return None
 
 
+    def _find_ha_list_items(self, find, ha_list, complete=None):
+        items = []
+        for item in ha_list:
+            if item.get('name') != find:
+                continue
+            if complete is not None and bool(item.get('complete', False)) != complete:
+                continue
+            items.append(item)
+        return items
+
+
     def _find_ha_list_item_by_id(self, item_id, ha_list):
         for item in ha_list:
             if item.get('id') == item_id:
@@ -463,9 +475,8 @@ class AlexaShoppingListSync:
 
     def _mark_items_completed(self, ha_list, item_names):
         changed = False
-        for item_name in item_names:
-            item = self._find_ha_list_item(item_name, ha_list)
-            if item is not None and item.get('complete') != True:
+        for item_name, count in Counter(item_names).items():
+            for item in self._find_ha_list_items(item_name, ha_list, complete=False)[:count]:
                 item['complete'] = True
                 changed = True
         return changed
@@ -475,57 +486,68 @@ class AlexaShoppingListSync:
         changed = False
         previous_ha_list = previous_ha_list or []
 
-        for item_name in item_names:
-            item = self._find_ha_list_item(item_name, ha_list)
-            if item is None or item.get('complete') != True:
+        for item_name, count in Counter(item_names).items():
+            previous_open_count = len(self._find_ha_list_items(item_name, previous_ha_list, complete=False))
+            reopen_budget = max(count - previous_open_count, 0)
+            if reopen_budget <= 0:
                 continue
 
-            previous_item = self._find_ha_list_item(item_name, previous_ha_list)
-            if previous_item is not None and previous_item.get('complete') == False:
-                # HA changed this item to completed after the last sync; keep that local intent.
-                continue
-
-            item['complete'] = False
-            changed = True
+            for item in self._find_ha_list_items(item_name, ha_list, complete=True)[:reopen_budget]:
+                item['complete'] = False
+                changed = True
         return changed
 
 
     def _merge_ha_with_alexa(self, ha_list, alexa_items):
         merged = []
-        seen_names = set()
+        remaining_by_name = defaultdict(list)
+        for item in ha_list:
+            remaining_by_name[item["name"]].append(item)
 
         for item_name in alexa_items:
-            existing = self._find_ha_list_item(item_name, ha_list)
-            if existing is None:
+            existing_items = remaining_by_name.get(item_name, [])
+            if len(existing_items) == 0:
                 merged.append(self._default_ha_item(item_name, complete=False))
             else:
+                existing = existing_items.pop(0)
                 merged.append({
                     "id": existing.get("id") or self._build_item_id(item_name),
                     "name": item_name,
                     "complete": False
                 })
-            seen_names.add(item_name)
 
-        for item in ha_list:
-            if item['name'] in seen_names:
-                continue
-            merged.append({
-                "id": item.get("id") or self._build_item_id(item["name"]),
-                "name": item["name"],
-                "complete": bool(item.get("complete", False))
-            })
+        for remaining_items in remaining_by_name.values():
+            for item in remaining_items:
+                merged.append({
+                    "id": item.get("id") or self._build_item_id(item["name"]),
+                    "name": item["name"],
+                    "complete": bool(item.get("complete", False))
+                })
 
         return merged
 
 
     def _strip_names_from_ha_list(self, ha_list, item_names):
-        hidden_names = set(item_names)
-        return [item for item in ha_list if item.get("name") not in hidden_names]
+        hidden_counts = Counter(item_names)
+        stripped = []
+        for item in ha_list:
+            item_name = item.get("name")
+            if hidden_counts[item_name] > 0:
+                hidden_counts[item_name] -= 1
+                continue
+            stripped.append(item)
+        return stripped
 
 
     def _filter_alexa_items(self, alexa_items, hidden_item_names):
-        hidden_names = set(hidden_item_names)
-        return [item_name for item_name in alexa_items if item_name not in hidden_names]
+        hidden_counts = Counter(hidden_item_names)
+        filtered = []
+        for item_name in alexa_items:
+            if hidden_counts[item_name] > 0:
+                hidden_counts[item_name] -= 1
+                continue
+            filtered.append(item_name)
+        return filtered
     
 
     async def _debug_log_entry(self, logger=None, entry=""):
@@ -550,20 +572,20 @@ class AlexaShoppingListSync:
         await self._debug_log_entry(logger, "Completed ledger: "+json.dumps(completed_ledger))
 
         if len(previous_alexa_list) > 0:
-            alexa_completed_in_remote = [
-                item_name for item_name in previous_alexa_list
-                if item_name not in alexa_list
-            ]
+            previous_alexa_counts = Counter(previous_alexa_list)
+            current_alexa_counts = Counter(alexa_list)
+            alexa_completed_in_remote = []
+            for item_name, previous_count in previous_alexa_counts.items():
+                removed_count = max(previous_count - current_alexa_counts[item_name], 0)
+                alexa_completed_in_remote.extend([item_name] * removed_count)
+
             if self._mark_items_completed(ha_list, alexa_completed_in_remote):
                 await self._debug_log_entry(
                     logger,
                     "Marked HA items as completed from Alexa removals: "+json.dumps(alexa_completed_in_remote)
                 )
 
-        alexa_reopened_in_remote = [
-            item_name for item_name in alexa_list
-            if self._find_ha_list_item(item_name, ha_list) is not None
-        ]
+        alexa_reopened_in_remote = list(alexa_list)
         if self._mark_items_incomplete(ha_list, alexa_reopened_in_remote, previous_ha_list):
             await self._debug_log_entry(
                 logger,
@@ -594,22 +616,29 @@ class AlexaShoppingListSync:
 
         to_add = []
         to_complete = []
+        alexa_counts = Counter(alexa_list)
+        open_ha_counts = Counter()
+        complete_ha_counts = Counter()
 
         for item in ha_list:
             if item['name'] in updated_new_names:
                 continue
 
             if item['complete'] == True:
-                if item['name'] in alexa_list:
-                    to_complete.append(item['name'])
-                continue
+                complete_ha_counts[item['name']] += 1
+            else:
+                open_ha_counts[item['name']] += 1
 
-            if item['name'] not in alexa_list:
-                to_add.append(item['name'])
+        for item_name, count in open_ha_counts.items():
+            missing_count = max(count - alexa_counts[item_name], 0)
+            to_add.extend([item_name] * missing_count)
+
+        for item_name, count in complete_ha_counts.items():
+            completable_count = min(count, alexa_counts[item_name])
+            to_complete.extend([item_name] * completable_count)
 
         for item_name in protected_alexa_items:
-            if item_name not in to_complete:
-                to_complete.append(item_name)
+            to_complete.append(item_name)
             if item_name in to_add:
                 to_add.remove(item_name)
 

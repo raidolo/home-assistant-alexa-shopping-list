@@ -329,7 +329,7 @@ class AlexaShoppingList:
                 list_items = list_container.find_elements(By.CLASS_NAME, 'item-title')
                 for item in list_items:
                     text = item.get_attribute('innerText')
-                    if text and text not in found:
+                    if text:
                         found.append(text)
 
                 current_last_text = list_items[-1].get_attribute('innerText') if list_items else None

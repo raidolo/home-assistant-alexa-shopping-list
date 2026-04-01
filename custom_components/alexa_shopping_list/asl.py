@@ -548,6 +548,23 @@ class AlexaShoppingListSync:
                 continue
             filtered.append(item_name)
         return filtered
+
+
+    def _mark_items_completed_from_count_delta(self, ha_list, before_items, after_items):
+        changed = False
+        before_counts = Counter(before_items)
+        after_counts = Counter(after_items)
+
+        for item_name, before_count in before_counts.items():
+            removed_count = max(before_count - after_counts[item_name], 0)
+            if removed_count <= 0:
+                continue
+
+            for item in self._find_ha_list_items(item_name, ha_list, complete=False)[:removed_count]:
+                item["complete"] = True
+                changed = True
+
+        return changed
     
 
     async def _debug_log_entry(self, logger=None, entry=""):
@@ -659,6 +676,11 @@ class AlexaShoppingListSync:
         
         refreshed_items = await self._get_list()
         await self._debug_log_entry(logger, "Refreshed Alexa list: "+json.dumps(refreshed_items))
+        if await loop.run_in_executor(None, self._mark_items_completed_from_count_delta, ha_list, alexa_list, refreshed_items):
+            await self._debug_log_entry(
+                logger,
+                "Marked HA items as completed from refreshed Alexa delta"
+            )
         await self._debug_log_entry(logger, "Exporting new HA shopping list")
         await loop.run_in_executor(None, self._update_completed_ledger, lambda ledger: [
             self._mark_ledger_item_seen_on_alexa(ledger, item_name, refreshed_items)

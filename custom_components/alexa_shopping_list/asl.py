@@ -574,6 +574,10 @@ class AlexaShoppingListSync:
             for item_name in previous_alexa_list
         ])
         completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
+        await self._debug_log_entry(
+            logger,
+            "Completed ledger after seen_on_alexa backfill: "+json.dumps(completed_ledger)
+        )
         protected_alexa_items = await loop.run_in_executor(
             None, self._protected_alexa_items_from_ledger, completed_ledger, alexa_list
         )
@@ -627,6 +631,10 @@ class AlexaShoppingListSync:
             for item_name in refreshed_items
         ])
         completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
+        await self._debug_log_entry(
+            logger,
+            "Completed ledger after refreshed Alexa backfill: "+json.dumps(completed_ledger)
+        )
         protected_refreshed_items = await loop.run_in_executor(
             None, self._protected_alexa_items_from_ledger, completed_ledger, refreshed_items
         )

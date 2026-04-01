@@ -189,7 +189,7 @@ class AlexaShoppingListSync:
         await self.sync(None, True)
 
 
-    async def log_homeassistant_shopping_list_event(self, logger, event):
+    def log_homeassistant_shopping_list_event(self, logger, event):
         if logger is None:
             return
 

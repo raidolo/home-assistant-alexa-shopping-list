@@ -38,9 +38,7 @@ async def async_setup_entry(hass, entry):
     # hass.bus.async_listen("shopping_list_updated", alexa.homeassistant_shopping_list_updated)
     alexa._shopping_list_event_unsub = hass.bus.async_listen(
         "shopping_list_updated",
-        lambda event: hass.async_create_task(
-            alexa.log_homeassistant_shopping_list_event(_LOGGER, event)
-        ),
+        lambda event: alexa.log_homeassistant_shopping_list_event(_LOGGER, event),
     )
     hass.data[DOMAIN][entry.entry_id] = alexa
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor"])
@@ -90,4 +88,3 @@ class AlexaServices:
                     title="Alexa Shopping List Auth Expired",
                     notification_id="alexa_shopping_list_auth"
                 )
-

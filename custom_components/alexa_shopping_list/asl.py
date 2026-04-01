@@ -16,11 +16,13 @@ class AlexaShoppingListSync:
 
     COMPLETED_LEDGER_TTL_HOURS = 24
 
-    def __init__(self, ip="localhost", port=4000, sync_mins=60, hasl_path=None, hasl_refresh=None):
+    def __init__(self, ip="localhost", port=4000, sync_mins=60, hasl_path=None, hasl_refresh=None, hass=None, ha_entity_id="todo.shopping_list"):
         self.uri = "ws://"+ip+":"+str(port)
         self._hasl_path = hasl_path
         self._metadata_path = f"{hasl_path}.alexa_sync_meta.json" if hasl_path else None
         self._hasl_refresh = hasl_refresh
+        self._hass = hass
+        self._ha_entity_id = ha_entity_id
         self._setup_cached_list(sync_mins * 60)
         self._sync_lock = asyncio.Lock()
         self.is_authenticated = True
@@ -369,6 +371,134 @@ class AlexaShoppingListSync:
     def _ha_shopping_list_hash(self):
         serialized = json.dumps(self._read_ha_shopping_list(), sort_keys=True)
         return hashlib.md5(serialized.encode('utf-8')).hexdigest()
+
+
+    def _ha_items_hash(self, items):
+        serialized = json.dumps(items, sort_keys=True)
+        return hashlib.md5(serialized.encode('utf-8')).hexdigest()
+
+
+    async def _todo_get_items(self, statuses=None):
+        if self._hass is None:
+            return None
+
+        response = await self._hass.services.async_call(
+            "todo",
+            "get_items",
+            {
+                "status": statuses or ["needs_action", "completed"],
+            },
+            blocking=True,
+            target={"entity_id": self._ha_entity_id},
+            return_response=True,
+        )
+        return response
+
+
+    def _normalize_todo_items_response(self, response):
+        if not isinstance(response, dict):
+            return []
+
+        entity_result = response.get(self._ha_entity_id, {})
+        items = entity_result.get("items", [])
+        if not isinstance(items, list):
+            return []
+
+        normalized = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("uid")
+            item_name = item.get("summary")
+            if not item_id or not item_name:
+                continue
+            normalized.append({
+                "id": item_id,
+                "name": item_name,
+                "complete": item.get("status") == "completed",
+            })
+        return normalized
+
+
+    async def _read_ha_shopping_list_async(self):
+        if self._hass is None:
+            return self._read_ha_shopping_list()
+
+        response = await self._todo_get_items()
+        return self._normalize_todo_items_response(response)
+
+
+    async def _ha_add_item(self, item_name):
+        await self._hass.services.async_call(
+            "todo",
+            "add_item",
+            {"item": item_name},
+            blocking=True,
+            target={"entity_id": self._ha_entity_id},
+        )
+
+
+    async def _ha_update_item(self, item_id, rename=None, complete=None):
+        service_data = {"item": item_id}
+        if rename is not None:
+            service_data["rename"] = rename
+        if complete is not None:
+            service_data["status"] = "completed" if complete else "needs_action"
+
+        await self._hass.services.async_call(
+            "todo",
+            "update_item",
+            service_data,
+            blocking=True,
+            target={"entity_id": self._ha_entity_id},
+        )
+
+
+    async def _ha_remove_item(self, item_id):
+        await self._hass.services.async_call(
+            "todo",
+            "remove_item",
+            {"item": item_id},
+            blocking=True,
+            target={"entity_id": self._ha_entity_id},
+        )
+
+
+    async def _apply_ha_shopping_list(self, desired_items):
+        if self._hass is None:
+            self._export_ha_shopping_list(desired_items)
+            return self._read_ha_shopping_list()
+
+        current_items = await self._read_ha_shopping_list_async()
+        current_by_id = {item["id"]: item for item in current_items}
+        desired_existing_ids = set()
+        additions = []
+
+        for desired_item in desired_items:
+            desired_id = desired_item.get("id")
+            desired_name = desired_item["name"]
+            desired_complete = bool(desired_item.get("complete", False))
+
+            if desired_id and desired_id in current_by_id:
+                desired_existing_ids.add(desired_id)
+                current_item = current_by_id[desired_id]
+
+                rename = desired_name if current_item.get("name") != desired_name else None
+                complete = desired_complete if bool(current_item.get("complete", False)) != desired_complete else None
+                if rename is not None or complete is not None:
+                    await self._ha_update_item(desired_id, rename=rename, complete=complete)
+            else:
+                additions.append(desired_item)
+
+        for current_item in current_items:
+            if current_item["id"] in desired_existing_ids:
+                continue
+            await self._ha_remove_item(current_item["id"])
+
+        for desired_item in additions:
+            await self._ha_add_item(desired_item["name"])
+
+        return await self._read_ha_shopping_list_async()
     
 
     def _read_sync_metadata(self):
@@ -575,8 +705,8 @@ class AlexaShoppingListSync:
 
     async def _do_sync(self, loop, logger=None, force=False):
 
-        ha_list = await loop.run_in_executor(None, self._read_ha_shopping_list)
-        original_ha_list_hash = await loop.run_in_executor(None, self._ha_shopping_list_hash)
+        ha_list = await self._read_ha_shopping_list_async()
+        original_ha_list_hash = self._ha_items_hash(ha_list)
         previous_alexa_list = await loop.run_in_executor(None, self._get_previous_alexa_items)
         previous_ha_list = await loop.run_in_executor(None, self._get_previous_ha_items)
         completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
@@ -694,20 +824,21 @@ class AlexaShoppingListSync:
         protected_refreshed_items = await loop.run_in_executor(
             None, self._protected_alexa_items_from_ledger, completed_ledger, refreshed_items
         )
-        export_ha_list = await loop.run_in_executor(
+        desired_ha_list = await loop.run_in_executor(
             None, self._strip_names_from_ha_list, filtered_ha_list, protected_refreshed_items
         )
         visible_refreshed_items = await loop.run_in_executor(
             None, self._filter_alexa_items, refreshed_items, protected_refreshed_items
         )
-        merged_ha_list = await loop.run_in_executor(None, self._merge_ha_with_alexa, export_ha_list, visible_refreshed_items)
-        await loop.run_in_executor(None, self._export_ha_shopping_list, merged_ha_list)
-        await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_items, merged_ha_list)
-        await self._hasl_refresh()
+        merged_ha_list = await loop.run_in_executor(None, self._merge_ha_with_alexa, desired_ha_list, visible_refreshed_items)
+        applied_ha_list = await self._apply_ha_shopping_list(merged_ha_list)
+        await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_items, applied_ha_list)
+        if self._hasl_refresh is not None:
+            await self._hasl_refresh()
 
 
         await self._debug_log_entry(logger, "Original list hash: "+original_ha_list_hash)
-        new_ha_list_hash = await loop.run_in_executor(None, self._ha_shopping_list_hash)
+        new_ha_list_hash = self._ha_items_hash(applied_ha_list)
         await self._debug_log_entry(logger, "New list hash: "+new_ha_list_hash)
         if original_ha_list_hash != new_ha_list_hash:
             await self._debug_log_entry(logger, "List changed")
@@ -720,7 +851,7 @@ class AlexaShoppingListSync:
     async def sync(self, logger=None, force=False):
         loop = asyncio.get_running_loop()
 
-        if os.path.exists(self._hasl_path) == False:
+        if self._hass is None and os.path.exists(self._hasl_path) == False:
             await self._debug_log_entry(logger, "HA shopping list file not found - creating empty list")
             await loop.run_in_executor(None, self._export_ha_shopping_list, [])
 

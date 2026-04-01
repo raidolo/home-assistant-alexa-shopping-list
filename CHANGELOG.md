@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2604.002.00] - 2026-04-02
+
+### Features
+- **Home Assistant primitive refactor** - The custom component now starts moving away from direct `.shopping_list.json` reconstruction and toward Home Assistant-native list primitives, using `todo.*` APIs as the foundation for reading and applying shopping list changes.
+- **Completion ledger for bidirectional sync** - Added a local completion ledger to keep short-lived sync intent across Home Assistant and Alexa, improving the handling of recently completed items during bidirectional reconciliation.
+
+### Improvements
+- **24-hour re-add protection window** - Recently completed items can now stay protected for up to 24 hours to reduce immediate re-add/re-complete loops when the same item briefly reappears on Alexa.
+- **Duplicate-aware sync groundwork** - Sync logic now begins accounting for repeated identical names as counted occurrences instead of assuming every item name is unique.
+- **Alexa list extraction reliability** - Improved the Alexa virtual-list reader so scrolling no longer re-imports the same visible window repeatedly during list extraction.
+
+### Notes
+- **Duplicate handling still under active validation** - Exact duplicate names are now handled more deliberately, but this area is still being refined and needs more real-world testing before it can be considered fully stable.
+- **24-hour protection policy may still evolve** - The temporary protection window for recently completed items is currently retained during the primitive refactor, but its final behavior may change as sync semantics are simplified around Home Assistant-native item IDs.
+
 ## [2604.001.00] - 2026-04-01
 
 ### Bug Fixes

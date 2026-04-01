@@ -28,7 +28,9 @@ async def async_setup_entry(hass, entry):
             entry.data[CONF_PORT],
             entry.data[CONF_SYNC_MINS],
             hass.config.path(".shopping_list.json"),
-            hass.data["shopping_list"].async_load
+            hass.data["shopping_list"].async_load,
+            hass=hass,
+            ha_entity_id="todo.shopping_list",
         )
 
     except Exception as e:

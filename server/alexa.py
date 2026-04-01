@@ -507,12 +507,6 @@ class AlexaShoppingList:
         if ensure_page_ready:
             self._prepare_alexa_list_page(False)
 
-        element = self._get_alexa_list_item_element(item, ensure_page_ready=False)
-        if element != None:
-            if refresh_result:
-                return self.get_alexa_list(False)
-            return None
-
         self.driver.find_element(By.CLASS_NAME, 'list-header').find_element(By.CLASS_NAME, 'add-symbol').click()
 
         textfield = self.driver.find_element(By.CLASS_NAME, 'list-header').find_element(By.CLASS_NAME, 'input-box').find_element(By.TAG_NAME, 'input')

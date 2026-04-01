@@ -523,7 +523,7 @@ class AlexaShoppingListSync:
     def _write_sync_metadata(self, metadata):
         if self._metadata_path is None:
             return
-        tmp_metadata_path = f"{self._metadata_path}.tmp"
+        tmp_metadata_path = f"{self._metadata_path}.{uuid.uuid4().hex}.tmp"
         with open(tmp_metadata_path, "w") as outfile:
             outfile.write(json.dumps(metadata, indent=4, sort_keys=True))
         os.replace(tmp_metadata_path, self._metadata_path)

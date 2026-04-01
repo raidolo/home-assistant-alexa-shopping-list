@@ -187,6 +187,20 @@ class AlexaShoppingListSync:
 
     async def homeassistant_shopping_list_updated(self, event):
         await self.sync(None, True)
+
+
+    async def log_homeassistant_shopping_list_event(self, logger, event):
+        if logger is None:
+            return
+
+        payload = {
+            "event_type": getattr(event, "event_type", None),
+            "data": getattr(event, "data", None),
+        }
+        logger.debug(
+            "Received Home Assistant shopping_list_updated event: %s",
+            json.dumps(payload, sort_keys=True),
+        )
     
 
     def _build_item_id(self, item_name):

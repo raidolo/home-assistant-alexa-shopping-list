@@ -36,6 +36,12 @@ async def async_setup_entry(hass, entry):
         return False
     
     # hass.bus.async_listen("shopping_list_updated", alexa.homeassistant_shopping_list_updated)
+    alexa._shopping_list_event_unsub = hass.bus.async_listen(
+        "shopping_list_updated",
+        lambda event: hass.async_create_task(
+            alexa.log_homeassistant_shopping_list_event(_LOGGER, event)
+        ),
+    )
     hass.data[DOMAIN][entry.entry_id] = alexa
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor"])
 
@@ -43,6 +49,18 @@ async def async_setup_entry(hass, entry):
     hass.services.async_register(DOMAIN, SERVICE_SYNC, services.handle_sync_service)
 
     return True
+
+
+async def async_unload_entry(hass, entry):
+    """Unload a config entry."""
+    alexa = hass.data[DOMAIN].pop(entry.entry_id, None)
+    if alexa is not None:
+        unsub = getattr(alexa, "_shopping_list_event_unsub", None)
+        if unsub is not None:
+            unsub()
+
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "binary_sensor"])
+    return unload_ok
 
 
 class AlexaServices:
@@ -72,5 +90,4 @@ class AlexaServices:
                     title="Alexa Shopping List Auth Expired",
                     notification_id="alexa_shopping_list_auth"
                 )
-
 

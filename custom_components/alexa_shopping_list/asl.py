@@ -285,6 +285,7 @@ class AlexaShoppingListSync:
         item_id = item.get("id")
         item_name = item.get("name")
         item_complete = bool(item.get("complete", False))
+        previous_alexa_items = self._get_previous_alexa_items()
 
         def apply_update(ledger):
             if action == "update" and item_id and item_complete:
@@ -293,7 +294,7 @@ class AlexaShoppingListSync:
                     "name": item_name,
                     "completed_at": self._utcnow().isoformat(),
                     "removed_from_ha": False,
-                    "seen_on_alexa": False,
+                    "seen_on_alexa": bool(item_name and item_name in previous_alexa_items),
                 }
                 return
 
@@ -309,7 +310,7 @@ class AlexaShoppingListSync:
                         "name": item_name,
                         "completed_at": self._utcnow().isoformat(),
                         "removed_from_ha": True,
-                        "seen_on_alexa": False,
+                        "seen_on_alexa": bool(item_name and item_name in previous_alexa_items),
                     }
                 else:
                     existing["name"] = item_name

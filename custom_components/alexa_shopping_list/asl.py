@@ -282,6 +282,13 @@ class AlexaShoppingListSync:
         return protected
 
 
+    def _clear_ledger_for_active_ha_items(self, ledger, ha_list):
+        active_names = {item.get("name") for item in ha_list if item.get("complete") != True}
+        for item_id in list(ledger.keys()):
+            if ledger[item_id].get("name") in active_names:
+                del ledger[item_id]
+
+
     def _handle_homeassistant_shopping_list_event(self, logger, data):
         action = data.get("action")
         item = data.get("item") or {}
@@ -743,6 +750,7 @@ class AlexaShoppingListSync:
         updated_new_names = {update['new'] for update in update_items}
         await self._debug_log_entry(logger, "To update on alexa: "+json.dumps(update_items))
 
+        await loop.run_in_executor(None, self._update_completed_ledger, lambda ledger: self._clear_ledger_for_active_ha_items(ledger, ha_list))
         await loop.run_in_executor(None, self._update_completed_ledger, lambda ledger: [
             self._mark_ledger_item_seen_on_alexa(ledger, item_name, previous_alexa_list)
             for item_name in previous_alexa_list

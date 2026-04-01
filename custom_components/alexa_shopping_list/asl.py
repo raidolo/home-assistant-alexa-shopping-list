@@ -738,6 +738,8 @@ class AlexaShoppingListSync:
                     logger,
                     "Marked HA items as completed from Alexa removals: "+json.dumps(alexa_completed_in_remote)
                 )
+        else:
+            alexa_completed_in_remote = []
 
         alexa_reopened_in_remote = list(alexa_list)
         if self._mark_items_incomplete(ha_list, alexa_reopened_in_remote, previous_ha_list):
@@ -791,6 +793,16 @@ class AlexaShoppingListSync:
         for item_name, count in complete_ha_counts.items():
             completable_count = min(count, alexa_counts[item_name])
             to_complete.extend([item_name] * completable_count)
+
+        remote_completed_counts = Counter(alexa_completed_in_remote)
+        if remote_completed_counts:
+            filtered_to_complete = []
+            for item_name in to_complete:
+                if remote_completed_counts[item_name] > 0:
+                    remote_completed_counts[item_name] -= 1
+                    continue
+                filtered_to_complete.append(item_name)
+            to_complete = filtered_to_complete
 
         for item_name in protected_alexa_items:
             to_complete.append(item_name)

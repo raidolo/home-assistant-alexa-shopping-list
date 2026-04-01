@@ -770,14 +770,10 @@ class AlexaShoppingListSync:
             logger,
             "Completed ledger after seen_on_alexa backfill: "+json.dumps(completed_ledger)
         )
-        protected_alexa_items = await loop.run_in_executor(
-            None, self._protected_alexa_items_from_ledger, completed_ledger, alexa_list
-        )
-        if protected_alexa_items:
-            await self._debug_log_entry(
-                logger,
-                "Protected Alexa items from HA completed ledger: "+json.dumps(protected_alexa_items)
-            )
+        # Temporarily disable ledger-based protection while stabilizing the todo.*
+        # primitive refactor. For now we want to mirror the real list state more
+        # directly instead of suppressing or re-completing items from historical memory.
+        protected_alexa_items = []
 
         to_add = []
         to_complete = []
@@ -849,9 +845,8 @@ class AlexaShoppingListSync:
             logger,
             "Completed ledger after refreshed Alexa backfill: "+json.dumps(completed_ledger)
         )
-        protected_refreshed_items = await loop.run_in_executor(
-            None, self._protected_alexa_items_from_ledger, completed_ledger, refreshed_items
-        )
+        # Keep ledger writes/logging for now, but do not let it alter sync results.
+        protected_refreshed_items = []
         desired_ha_list = await loop.run_in_executor(
             None, self._strip_names_from_ha_list, filtered_ha_list, protected_refreshed_items
         )

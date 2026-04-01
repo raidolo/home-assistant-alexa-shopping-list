@@ -320,23 +320,40 @@ class AlexaShoppingList:
 
     def _extract_alexa_list_items(self, list_container):
         found = []
-        last_text = None
+        previous_visible = []
+        previous_signature = None
         max_scrolls = 50
         scroll_count = 0
 
         while True:
             try:
                 list_items = list_container.find_elements(By.CLASS_NAME, 'item-title')
+                current_visible = []
                 for item in list_items:
                     text = item.get_attribute('innerText')
                     if text:
-                        found.append(text)
+                        current_visible.append(text)
 
-                current_last_text = list_items[-1].get_attribute('innerText') if list_items else None
-                if not list_items or current_last_text == last_text:
+                if not current_visible:
                     break
 
-                last_text = current_last_text
+                current_signature = json.dumps(current_visible, ensure_ascii=False)
+                if not found:
+                    found.extend(current_visible)
+                else:
+                    overlap = 0
+                    max_overlap = min(len(previous_visible), len(current_visible))
+                    for candidate in range(max_overlap, 0, -1):
+                        if previous_visible[-candidate:] == current_visible[:candidate]:
+                            overlap = candidate
+                            break
+                    found.extend(current_visible[overlap:])
+
+                if current_signature == previous_signature:
+                    break
+
+                previous_visible = current_visible
+                previous_signature = current_signature
                 scroll_count += 1
                 if scroll_count >= max_scrolls:
                     break

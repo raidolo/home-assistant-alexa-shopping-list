@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2604.001.00] - 2026-04-01
+
+### Bug Fixes
+- **Options flow compatibility** - Fixed the custom integration options flow so it no longer assigns `config_entry` manually, avoiding the Home Assistant deprecation warning and preserving compatibility with Home Assistant 2025.12 and later.
+
 ## [2603.090.09] - 2026-03-31
 
 ### Features

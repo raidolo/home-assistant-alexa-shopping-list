@@ -25,7 +25,7 @@ class AlexaShoppingListConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def async_get_options_flow(config_entry):
-        return AlexaShoppingListOptionsFlow(config_entry)
+        return AlexaShoppingListOptionsFlow()
 
     def __init__(self) -> None:
         self.config_data = {}
@@ -92,9 +92,6 @@ class AlexaShoppingListConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class AlexaShoppingListOptionsFlow(config_entries.OptionsFlow):
     """Handle Alexa Shopping List options."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:

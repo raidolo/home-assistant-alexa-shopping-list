@@ -508,6 +508,7 @@ class AlexaShoppingList:
         if ensure_page_ready:
             self._prepare_alexa_list_page(False)
 
+        logger.info(f"Alexa add requested: {item}")
         self.driver.find_element(By.CLASS_NAME, 'list-header').find_element(By.CLASS_NAME, 'add-symbol').click()
 
         textfield = self.driver.find_element(By.CLASS_NAME, 'list-header').find_element(By.CLASS_NAME, 'input-box').find_element(By.TAG_NAME, 'input')
@@ -521,7 +522,9 @@ class AlexaShoppingList:
         self._wait_for_element_staleness(cancel_button)
 
         if refresh_result:
-            return self.get_alexa_list(False)
+            refreshed = self.get_alexa_list(False)
+            logger.info(f"Alexa add result for '{item}': {json.dumps(refreshed, ensure_ascii=False)}")
+            return refreshed
         return None
 
 
@@ -595,20 +598,41 @@ class AlexaShoppingList:
         update_items = update_items or []
         complete_items = complete_items or []
 
+        logger.info(
+            "Alexa bulk apply requested: %s",
+            json.dumps(
+                {
+                    "add_items": add_items,
+                    "remove_items": remove_items,
+                    "update_items": update_items,
+                    "complete_items": complete_items,
+                },
+                ensure_ascii=False,
+            ),
+        )
         self._prepare_alexa_list_page(False)
 
         for item in add_items:
+            logger.info(f"Alexa bulk add item: {item}")
             self._add_alexa_list_item(item, refresh_result=False, ensure_page_ready=False)
 
         for item in remove_items:
+            logger.info(f"Alexa bulk remove item: {item}")
             self._remove_alexa_list_item(item, refresh_result=False, ensure_page_ready=False)
 
         for update in update_items:
+            logger.info(
+                "Alexa bulk update item: %s",
+                json.dumps(update, ensure_ascii=False),
+            )
             self._update_alexa_list_item(update['old'], update['new'], refresh_result=False, ensure_page_ready=False)
 
         for item in complete_items:
+            logger.info(f"Alexa bulk complete item: {item}")
             self._complete_alexa_list_item(item, refresh_result=False, ensure_page_ready=False)
 
-        return self.get_alexa_list(False)
+        refreshed = self.get_alexa_list(False)
+        logger.info(f"Alexa bulk apply result: {json.dumps(refreshed, ensure_ascii=False)}")
+        return refreshed
 
     # ============================================================

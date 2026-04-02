@@ -153,8 +153,8 @@ class AlexaShoppingListSync:
         return self._cached_list
     
 
-    async def _update_item(self, old, new):
-        response = await self._send_command("update_item", old=old, new=new)
+    async def _update_item(self, old, new, alexa_id=None):
+        response = await self._send_command("update_item", old=old, new=new, alexa_id=alexa_id)
         if self._command_successful(response):
             self._update_cached_list(self._command_result(response))
         return self._cached_list
@@ -550,6 +550,20 @@ class AlexaShoppingListSync:
         self._write_sync_metadata(metadata)
 
 
+    def _get_item_links(self):
+        metadata = self._read_sync_metadata()
+        links = metadata.get("item_links", {})
+        if isinstance(links, dict):
+            return links
+        return {}
+
+
+    def _set_item_links(self, links):
+        metadata = self._read_sync_metadata()
+        metadata["item_links"] = links
+        self._write_sync_metadata(metadata)
+
+
     def _normalize_alexa_items(self, items):
         normalized = []
         if not isinstance(items, list):
@@ -598,6 +612,106 @@ class AlexaShoppingListSync:
         ]
 
 
+    def _find_alexa_item_by_id(self, item_id, alexa_items):
+        for item in self._normalize_alexa_items(alexa_items):
+            if item.get("id") == item_id:
+                return item
+        return None
+
+
+    def _link_ha_and_alexa_items(self, links, ha_item_id, alexa_item_id):
+        if not ha_item_id or not alexa_item_id:
+            return
+
+        stale_ha_ids = [existing_ha_id for existing_ha_id, existing_alexa_id in links.items() if existing_alexa_id == alexa_item_id and existing_ha_id != ha_item_id]
+        for stale_ha_id in stale_ha_ids:
+            del links[stale_ha_id]
+
+        links[ha_item_id] = alexa_item_id
+
+
+    def _prune_item_links(self, links, ha_items, alexa_items):
+        valid_ha_ids = {item.get("id") for item in ha_items if item.get("id")}
+        valid_alexa_ids = {item.get("id") for item in self._normalize_alexa_items(alexa_items) if item.get("id")}
+        return {
+            ha_item_id: alexa_item_id
+            for ha_item_id, alexa_item_id in links.items()
+            if ha_item_id in valid_ha_ids and alexa_item_id in valid_alexa_ids
+        }
+
+
+    def _bootstrap_item_links(self, links, ha_items, alexa_items):
+        normalized_alexa = self._normalize_alexa_items(alexa_items)
+        linked_alexa_ids = set(links.values())
+
+        active_ha_by_name = defaultdict(list)
+        for item in ha_items:
+            if bool(item.get("complete", False)):
+                continue
+            item_id = item.get("id")
+            if not item_id or item_id in links:
+                continue
+            active_ha_by_name[item["name"]].append(item)
+
+        active_alexa_by_name = defaultdict(list)
+        for item in normalized_alexa:
+            if bool(item.get("complete", False)):
+                continue
+            item_id = item.get("id")
+            if not item_id or item_id in linked_alexa_ids:
+                continue
+            active_alexa_by_name[item["name"]].append(item)
+
+        for item_name, ha_candidates in active_ha_by_name.items():
+            alexa_candidates = active_alexa_by_name.get(item_name, [])
+            if len(ha_candidates) == 1 and len(alexa_candidates) == 1:
+                self._link_ha_and_alexa_items(
+                    links,
+                    ha_candidates[0].get("id"),
+                    alexa_candidates[0].get("id"),
+                )
+
+        return links
+
+
+    def _apply_remote_linked_changes(self, ha_list, previous_ha_list, previous_alexa_items, current_alexa_items, links):
+        changed = False
+
+        for ha_item in ha_list:
+            ha_item_id = ha_item.get("id")
+            if not ha_item_id:
+                continue
+
+            alexa_item_id = links.get(ha_item_id)
+            if not alexa_item_id:
+                continue
+
+            current_alexa_item = self._find_alexa_item_by_id(alexa_item_id, current_alexa_items)
+            previous_alexa_item = self._find_alexa_item_by_id(alexa_item_id, previous_alexa_items)
+            previous_ha_item = self._find_ha_list_item_by_id(ha_item_id, previous_ha_list)
+
+            if current_alexa_item is None or previous_alexa_item is None or previous_ha_item is None:
+                continue
+
+            if (
+                previous_alexa_item.get("name") != current_alexa_item.get("name")
+                and ha_item.get("name") == previous_ha_item.get("name") == previous_alexa_item.get("name")
+            ):
+                ha_item["name"] = current_alexa_item.get("name")
+                changed = True
+
+            if (
+                bool(previous_alexa_item.get("complete", False)) is False
+                and bool(current_alexa_item.get("complete", False)) is True
+                and bool(previous_ha_item.get("complete", False)) is False
+                and bool(ha_item.get("complete", False)) is False
+            ):
+                ha_item["complete"] = True
+                changed = True
+
+        return changed
+
+
     def _compact_alexa_snapshot_for_log(self, items):
         compact = []
         for item in self._normalize_alexa_items(items):
@@ -636,8 +750,9 @@ class AlexaShoppingListSync:
         return None
 
 
-    def _collect_local_updates(self, ha_list, previous_ha_list, alexa_list):
+    def _collect_local_updates(self, ha_list, previous_ha_list, alexa_list, item_links=None):
         updates = []
+        item_links = item_links or {}
 
         for item in ha_list:
             item_id = item.get('id')
@@ -663,7 +778,8 @@ class AlexaShoppingListSync:
             updates.append({
                 'old': old_name,
                 'new': new_name,
-                'id': item_id
+                'id': item_id,
+                'alexa_id': item_links.get(item_id)
             })
 
         return updates
@@ -855,11 +971,37 @@ class AlexaShoppingListSync:
         previous_alexa_list = self._active_alexa_item_names(previous_alexa_snapshot)
         previous_ha_list = await loop.run_in_executor(None, self._get_previous_ha_items)
         completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
+        item_links = await loop.run_in_executor(None, self._get_item_links)
         
         await self._debug_log_entry(logger, "Loading Alexa shopping list")
         alexa_snapshot = self._normalize_alexa_items(await self._get_list(force))
         alexa_list = self._active_alexa_item_names(alexa_snapshot)
         await self._debug_log_entry(logger, "Alexa list: "+json.dumps(alexa_list))
+
+        item_links = await loop.run_in_executor(
+            None,
+            self._prune_item_links,
+            item_links,
+            ha_list,
+            alexa_snapshot,
+        )
+        item_links = await loop.run_in_executor(
+            None,
+            self._bootstrap_item_links,
+            item_links,
+            ha_list,
+            alexa_snapshot,
+        )
+        if await loop.run_in_executor(
+            None,
+            self._apply_remote_linked_changes,
+            ha_list,
+            previous_ha_list,
+            previous_alexa_snapshot,
+            alexa_snapshot,
+            item_links,
+        ):
+            await self._debug_log_entry(logger, "Applied linked remote Alexa changes to HA")
 
         if len(previous_alexa_list) > 0:
             previous_alexa_counts = Counter(previous_alexa_list)
@@ -902,7 +1044,7 @@ class AlexaShoppingListSync:
         # completed state wins over remote active items with the same name.
         alexa_reopened_in_remote = []
 
-        update_items = self._collect_local_updates(ha_list, previous_ha_list, alexa_list)
+        update_items = self._collect_local_updates(ha_list, previous_ha_list, alexa_list, item_links=item_links)
         updated_new_names = {update['new'] for update in update_items}
         await self._debug_log_entry(logger, "To update on alexa: "+json.dumps(update_items))
 
@@ -1009,7 +1151,22 @@ class AlexaShoppingListSync:
         )
         await self._debug_log_entry(logger, "Merged HA list before apply: "+json.dumps(merged_ha_list))
         applied_ha_list = await self._apply_ha_shopping_list(merged_ha_list)
+        item_links = await loop.run_in_executor(
+            None,
+            self._prune_item_links,
+            item_links,
+            applied_ha_list,
+            refreshed_snapshot,
+        )
+        item_links = await loop.run_in_executor(
+            None,
+            self._bootstrap_item_links,
+            item_links,
+            applied_ha_list,
+            refreshed_snapshot,
+        )
         await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_snapshot, applied_ha_list)
+        await loop.run_in_executor(None, self._set_item_links, item_links)
         if self._hasl_refresh is not None:
             await self._hasl_refresh()
 

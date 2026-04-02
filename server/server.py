@@ -221,7 +221,12 @@ async def _cmd_get_update_shopping_list_item(args):
         if requires_login:
             result = None, "Not authenticated"
         else:
-            result = await asyncio.to_thread(instance.update_alexa_list_item, args['old'], args['new']), None
+            result = await asyncio.to_thread(
+                instance.update_alexa_list_item,
+                args['old'],
+                args['new'],
+                args.get('alexa_id')
+            ), None
     except NotAuthenticatedError as e:
         logger.warning(f"Session expired during update_item: {e}")
         _set_config_value("auth_checked_time", 0)

@@ -519,9 +519,14 @@ class AlexaShoppingList:
         )
 
 
-    def _http_update_list_item(self, old: str, new: str):
+    def _http_update_list_item(self, old: str, new: str, alexa_id: str = None):
         list_payload = self._http_default_list_payload()
-        current_item = self._http_find_list_item(list_payload, old, completed=False, prefer_latest=False)
+        if alexa_id:
+            current_item = self._http_find_item_by_id(list_payload, alexa_id)
+            if current_item is not None and bool(current_item.get("completed", False)):
+                current_item = None
+        else:
+            current_item = self._http_find_list_item(list_payload, old, completed=False, prefer_latest=False)
         if current_item is None:
             return False
 
@@ -1088,13 +1093,13 @@ fetch(url, {
         return None
 
 
-    def update_alexa_list_item(self, old: str, new: str):
-        return self._update_alexa_list_item(old, new, refresh_result=True)
+    def update_alexa_list_item(self, old: str, new: str, alexa_id: str = None):
+        return self._update_alexa_list_item(old, new, refresh_result=True, alexa_id=alexa_id)
 
 
-    def _update_alexa_list_item(self, old: str, new: str, refresh_result: bool = True, ensure_page_ready: bool = True):
+    def _update_alexa_list_item(self, old: str, new: str, refresh_result: bool = True, ensure_page_ready: bool = True, alexa_id: str = None):
         try:
-            updated = self._http_update_list_item(old, new)
+            updated = self._http_update_list_item(old, new, alexa_id=alexa_id)
             if refresh_result:
                 return self.get_alexa_list(False)
             return None if updated else None
@@ -1201,7 +1206,13 @@ fetch(url, {
                 "Alexa bulk update item: %s",
                 json.dumps(update, ensure_ascii=False),
             )
-            self._update_alexa_list_item(update['old'], update['new'], refresh_result=False, ensure_page_ready=False)
+            self._update_alexa_list_item(
+                update['old'],
+                update['new'],
+                refresh_result=False,
+                ensure_page_ready=False,
+                alexa_id=update.get('alexa_id')
+            )
 
         for item in complete_items:
             logger.info(f"Alexa bulk complete item: {item}")

@@ -12,6 +12,7 @@ import time
 import json
 import os
 import logging
+import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +301,45 @@ class AlexaShoppingList:
             return False
 
 
+    def _debug_dump_getlistitems_api(self):
+        api_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/getlistitems"
+        script = """
+const url = arguments[0];
+const done = arguments[arguments.length - 1];
+
+fetch(url, {
+  method: 'GET',
+  credentials: 'include',
+  headers: {
+    'accept': 'application/json'
+  }
+})
+  .then(async (response) => {
+    const body = await response.text();
+    done({
+      ok: response.ok,
+      status: response.status,
+      body
+    });
+  })
+  .catch((error) => {
+    done({
+      ok: false,
+      error: String(error)
+    });
+  });
+"""
+        result = self.driver.execute_async_script(script, api_url)
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S%f")
+        dump_path = os.path.join("/tmp", f"alexa_getlistitems_{timestamp}.json")
+
+        with open(dump_path, "w", encoding="utf-8") as dump_file:
+            json.dump(result, dump_file, indent=2, ensure_ascii=False)
+
+        logger.info(f"Alexa getlistitems API dump saved to {dump_path}")
+        return result, dump_path
+
+
     def _get_alexa_list_container(self):
         self._check_auth_redirect()
 
@@ -394,6 +434,21 @@ class AlexaShoppingList:
 
     def get_alexa_list(self, refresh: bool = True):
         self._prepare_alexa_list_page(refresh)
+        try:
+            api_result, dump_path = self._debug_dump_getlistitems_api()
+            logger.info(
+                "Alexa getlistitems API result: %s",
+                json.dumps(
+                    {
+                        "ok": api_result.get("ok"),
+                        "status": api_result.get("status"),
+                        "dump_path": dump_path,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        except Exception as e:
+            logger.info(f"Alexa getlistitems API dump failed: {e}")
         self._wait_for_alexa_list_items()
         list_container = self._get_alexa_list_container()
         found = self._extract_alexa_list_items(list_container)

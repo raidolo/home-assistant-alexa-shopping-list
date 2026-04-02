@@ -780,14 +780,30 @@ class AlexaShoppingListSync:
         return completions
 
 
-    def _filter_unlinked_alexa_active_names(self, alexa_items, links):
-        linked_alexa_ids = set((links or {}).values())
+    def _filter_unlinked_alexa_active_names(self, alexa_items, links, ha_items=None):
+        links = links or {}
+        ha_items_by_id = {
+            item.get("id"): item
+            for item in (ha_items or [])
+            if item.get("id")
+        }
         filtered = []
         for item in self._normalize_alexa_items(alexa_items):
             if bool(item.get("complete", False)):
                 continue
-            if item.get("id") in linked_alexa_ids:
-                continue
+            item_id = item.get("id")
+            if item_id in links.values():
+                linked_ha_item_id = next(
+                    (ha_item_id for ha_item_id, alexa_item_id in links.items() if alexa_item_id == item_id),
+                    None,
+                )
+                linked_ha_item = ha_items_by_id.get(linked_ha_item_id)
+                if (
+                    linked_ha_item is not None
+                    and bool(linked_ha_item.get("complete", False)) is False
+                    and linked_ha_item.get("name") == item.get("name")
+                ):
+                    continue
             filtered.append(item["name"])
         return filtered
 
@@ -805,6 +821,8 @@ class AlexaShoppingListSync:
             if item_id and item_id in links:
                 linked_alexa_item = alexa_items_by_id.get(links[item_id])
                 if (
+                    bool(item.get("complete", False)) is False
+                    and
                     linked_alexa_item is not None
                     and bool(linked_alexa_item.get("complete", False)) is False
                     and linked_alexa_item.get("name") == item.get("name")
@@ -1165,10 +1183,10 @@ class AlexaShoppingListSync:
             )
 
         unlinked_previous_alexa_list = await loop.run_in_executor(
-            None, self._filter_unlinked_alexa_active_names, previous_alexa_snapshot, item_links
+            None, self._filter_unlinked_alexa_active_names, previous_alexa_snapshot, item_links, previous_ha_list
         )
         unlinked_alexa_list = await loop.run_in_executor(
-            None, self._filter_unlinked_alexa_active_names, alexa_snapshot, item_links
+            None, self._filter_unlinked_alexa_active_names, alexa_snapshot, item_links, ha_list
         )
         unlinked_ha_list = await loop.run_in_executor(
             None, self._filter_unlinked_ha_items, ha_list, item_links, alexa_snapshot
@@ -1360,7 +1378,7 @@ class AlexaShoppingListSync:
         refreshed_items = self._active_alexa_item_names(refreshed_snapshot)
         await self._debug_log_entry(logger, "Refreshed Alexa list: "+json.dumps(refreshed_items))
         unlinked_refreshed_items = await loop.run_in_executor(
-            None, self._filter_unlinked_alexa_active_names, refreshed_snapshot, item_links
+            None, self._filter_unlinked_alexa_active_names, refreshed_snapshot, item_links, ha_list
         )
         ignored_refreshed_removed_counts = Counter(
             item.get("name") if isinstance(item, dict) else item

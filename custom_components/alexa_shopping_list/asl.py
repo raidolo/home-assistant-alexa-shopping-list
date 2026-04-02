@@ -149,7 +149,11 @@ class AlexaShoppingListSync:
     async def _add_item(self, item):
         response = await self._send_command("add_item", item=item)
         if self._command_successful(response):
-            self._update_cached_list(self._command_result(response))
+            result = self._command_result(response)
+            if isinstance(result, dict) and "list" in result:
+                self._update_cached_list(result.get("list"))
+            else:
+                self._update_cached_list(result)
         return self._cached_list
     
 
@@ -174,16 +178,21 @@ class AlexaShoppingListSync:
         return self._cached_list
 
 
-    async def _bulk_apply_changes(self, add_items=None, remove_items=None, update_items=None, complete_items=None):
+    async def _bulk_apply_changes(self, add_items=None, remove_items=None, update_items=None, complete_items=None, include_details=False):
         response = await self._send_command(
             "bulk_apply_changes",
             add_items=add_items or [],
             remove_items=remove_items or [],
             update_items=update_items or [],
-            complete_items=complete_items or []
+            complete_items=complete_items or [],
+            include_details=include_details
         )
         if self._command_successful(response):
-            self._update_cached_list(self._command_result(response))
+            result = self._command_result(response)
+            if isinstance(result, dict) and "list" in result:
+                self._update_cached_list(result.get("list"))
+                return result
+            self._update_cached_list(result)
         return self._cached_list
 
     # ============================================================
@@ -833,6 +842,35 @@ class AlexaShoppingListSync:
         return deduped
 
 
+    def _link_added_alexa_items(self, links, ha_items, added_alexa_items):
+        normalized_added = self._normalize_alexa_items(added_alexa_items)
+        if not normalized_added:
+            return links
+
+        linked_ha_ids = set(links.keys())
+
+        available_ha_by_name = defaultdict(list)
+        for item in ha_items:
+            if bool(item.get("complete", False)):
+                continue
+            item_id = item.get("id")
+            if not item_id or item_id in linked_ha_ids:
+                continue
+            available_ha_by_name[item.get("name")].append(item_id)
+
+        for alexa_item in normalized_added:
+            alexa_id = alexa_item.get("id")
+            alexa_name = alexa_item.get("name")
+            if not alexa_id or not alexa_name:
+                continue
+            if not available_ha_by_name[alexa_name]:
+                continue
+            ha_item_id = available_ha_by_name[alexa_name].pop(0)
+            self._link_ha_and_alexa_items(links, ha_item_id, alexa_id)
+
+        return links
+
+
     def _find_ha_list_item(self, find, ha_list):
         for item in ha_list:
             if item['name'] == find:
@@ -1248,19 +1286,42 @@ class AlexaShoppingListSync:
 
         await self._debug_log_entry(logger, "To add to alexa: "+json.dumps(to_add))
         await self._debug_log_entry(logger, "To complete on alexa: "+json.dumps(to_complete))
+        added_alexa_items = []
         if len(to_add) + len(to_complete) + len(update_items) > 1:
             await self._debug_log_entry(logger, "Applying Alexa changes in bulk")
-            await self._bulk_apply_changes(add_items=to_add, update_items=update_items, complete_items=to_complete)
+            bulk_result = await self._bulk_apply_changes(
+                add_items=to_add,
+                update_items=update_items,
+                complete_items=to_complete,
+                include_details=True,
+            )
+            if isinstance(bulk_result, dict):
+                added_alexa_items = bulk_result.get("added_items", [])
         else:
             for update in update_items:
                 await self._update_item(update['old'], update['new'], alexa_id=update.get('alexa_id'))
             for item in to_add:
-                await self._add_item(item)
+                add_response = await self._send_command("add_item", item=item, include_details=True)
+                if self._command_successful(add_response):
+                    add_result = self._command_result(add_response)
+                    if isinstance(add_result, dict) and "list" in add_result:
+                        self._update_cached_list(add_result.get("list"))
+                        added_alexa_items.extend(add_result.get("added_items", []))
+                    else:
+                        self._update_cached_list(add_result)
             for item in to_complete:
                 if isinstance(item, dict):
                     await self._complete_item(item.get('name') or "", alexa_id=item.get('alexa_id'))
                 else:
                     await self._complete_item(item)
+
+        item_links = await loop.run_in_executor(
+            None,
+            self._link_added_alexa_items,
+            item_links,
+            ha_list,
+            added_alexa_items,
+        )
         
         refreshed_snapshot = self._normalize_alexa_items(await self._get_list())
         refreshed_items = self._active_alexa_item_names(refreshed_snapshot)

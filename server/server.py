@@ -201,7 +201,11 @@ async def _cmd_get_add_shopping_list_item(args):
         if requires_login:
             result = None, "Not authenticated"
         else:
-            result = await asyncio.to_thread(instance.add_alexa_list_item, args['item']), None
+            result = await asyncio.to_thread(
+                instance.add_alexa_list_item,
+                args['item'],
+                args.get('include_details', False)
+            ), None
     except NotAuthenticatedError as e:
         logger.warning(f"Session expired during add_item: {e}")
         _set_config_value("auth_checked_time", 0)
@@ -295,7 +299,8 @@ async def _cmd_bulk_apply_shopping_list_changes(args):
                 add_items=args.get('add_items', []),
                 remove_items=args.get('remove_items', []),
                 update_items=args.get('update_items', []),
-                complete_items=args.get('complete_items', [])
+                complete_items=args.get('complete_items', []),
+                include_details=args.get('include_details', False)
             ), None
     except NotAuthenticatedError as e:
         logger.warning(f"Session expired during bulk_apply_changes: {e}")

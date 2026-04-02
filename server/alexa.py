@@ -509,7 +509,7 @@ class AlexaShoppingList:
     def _http_add_list_item(self, item: str):
         list_id = self._http_default_list_id()
         add_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/addlistitem/" + list_id
-        self._http_request_json(
+        response = self._http_request_json(
             add_url,
             method="POST",
             payload={
@@ -517,6 +517,18 @@ class AlexaShoppingList:
                 "listItemMetadata": [],
             },
         )
+        if response.get("ok") and isinstance(response.get("json"), dict):
+            return {
+                "id": response["json"].get("id"),
+                "name": response["json"].get("value"),
+                "complete": bool(response["json"].get("completed", False)),
+                "createdDateTime": response["json"].get("createdDateTime"),
+                "updatedDateTime": response["json"].get("updatedDateTime"),
+                "version": response["json"].get("version"),
+                "listId": response["json"].get("listId"),
+                "defaultList": True,
+            }
+        return None
 
 
     def _http_update_list_item(self, old: str, new: str, alexa_id: str = None):
@@ -1055,14 +1067,14 @@ fetch(url, {
         return None
 
 
-    def add_alexa_list_item(self, item: str):
-        return self._add_alexa_list_item(item, refresh_result=True)
+    def add_alexa_list_item(self, item: str, include_details: bool = False):
+        return self._add_alexa_list_item(item, refresh_result=True, include_details=include_details)
 
 
-    def _add_alexa_list_item(self, item: str, refresh_result: bool = True, ensure_page_ready: bool = True):
+    def _add_alexa_list_item(self, item: str, refresh_result: bool = True, ensure_page_ready: bool = True, include_details: bool = False):
         try:
             logger.info(f"Alexa add requested: {item}")
-            self._http_add_list_item(item)
+            added_item = self._http_add_list_item(item)
             if refresh_result:
                 refreshed = self.get_alexa_list(False)
                 logger.info(
@@ -1070,7 +1082,17 @@ fetch(url, {
                     item,
                     json.dumps(self._compact_items_for_log(refreshed), ensure_ascii=False),
                 )
+                if include_details:
+                    return {
+                        "list": refreshed,
+                        "added_items": [added_item] if added_item is not None else [],
+                    }
                 return refreshed
+            if include_details:
+                return {
+                    "list": None,
+                    "added_items": [added_item] if added_item is not None else [],
+                }
             return None
         except Exception as http_error:
             logger.warning(f"Alexa HTTP add failed for '{item}', falling back to Selenium: {http_error}")
@@ -1094,7 +1116,17 @@ fetch(url, {
         if refresh_result:
             refreshed = self.get_alexa_list(False)
             logger.info(f"Alexa add result for '{item}': {json.dumps(refreshed, ensure_ascii=False)}")
+            if include_details:
+                return {
+                    "list": refreshed,
+                    "added_items": [],
+                }
             return refreshed
+        if include_details:
+            return {
+                "list": None,
+                "added_items": [],
+            }
         return None
 
 
@@ -1178,7 +1210,7 @@ fetch(url, {
         return None
 
 
-    def bulk_apply_alexa_list_changes(self, add_items=None, remove_items=None, update_items=None, complete_items=None):
+    def bulk_apply_alexa_list_changes(self, add_items=None, remove_items=None, update_items=None, complete_items=None, include_details: bool = False):
         add_items = add_items or []
         remove_items = remove_items or []
         update_items = update_items or []
@@ -1198,9 +1230,12 @@ fetch(url, {
         )
         self._prepare_alexa_list_page(False)
 
+        added_items_result = []
         for item in add_items:
             logger.info(f"Alexa bulk add item: {item}")
-            self._add_alexa_list_item(item, refresh_result=False, ensure_page_ready=False)
+            added = self._add_alexa_list_item(item, refresh_result=False, ensure_page_ready=False, include_details=True)
+            if isinstance(added, dict):
+                added_items_result.extend(added.get("added_items", []))
 
         for item in remove_items:
             logger.info(f"Alexa bulk remove item: {item}")
@@ -1236,6 +1271,11 @@ fetch(url, {
             "Alexa bulk apply result: %s",
             json.dumps(self._compact_items_for_log(refreshed), ensure_ascii=False),
         )
+        if include_details:
+            return {
+                "list": refreshed,
+                "added_items": added_items_result,
+            }
         return refreshed
 
     # ============================================================

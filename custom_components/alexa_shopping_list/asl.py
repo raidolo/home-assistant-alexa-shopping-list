@@ -610,6 +610,27 @@ class AlexaShoppingListSync:
         return updates
 
 
+    def _collect_local_completions(self, ha_list, previous_ha_list):
+        completed_counts = Counter()
+
+        for item in ha_list:
+            if item.get("complete") != True:
+                continue
+
+            item_id = item.get("id")
+            if not item_id:
+                continue
+
+            previous_item = self._find_ha_list_item_by_id(item_id, previous_ha_list)
+            if previous_item is None:
+                continue
+
+            if previous_item.get("complete") == False:
+                completed_counts[item["name"]] += 1
+
+        return completed_counts
+
+
     def _collect_local_open_count_drops(self, ha_list, previous_ha_list):
         previous_open_counts = Counter()
         current_open_counts = Counter()
@@ -670,10 +691,11 @@ class AlexaShoppingListSync:
         return changed
 
 
-    def _merge_ha_with_alexa(self, ha_list, alexa_items):
+    def _merge_ha_with_alexa(self, ha_list, alexa_items, protected_completed_counts=None):
         merged = []
         remaining_active_by_name = defaultdict(list)
         remaining_completed_by_name = defaultdict(list)
+        protected_completed_counts = Counter(protected_completed_counts or {})
 
         for item in ha_list:
             if bool(item.get("complete", False)):
@@ -684,10 +706,10 @@ class AlexaShoppingListSync:
         for item_name in alexa_items:
             existing_items = remaining_active_by_name.get(item_name, [])
             if len(existing_items) == 0:
-                # Home Assistant currently wins over remote reopen semantics:
-                # do not resurrect completed HA items with the same name during
-                # the final merge, but still import brand-new remote items.
-                if len(remaining_completed_by_name.get(item_name, [])) > 0:
+                # Only suppress remote re-add for one sync when the same item
+                # was just completed locally in Home Assistant.
+                if protected_completed_counts[item_name] > 0:
+                    protected_completed_counts[item_name] -= 1
                     continue
                 merged.append(self._default_ha_item(item_name, complete=False))
             else:
@@ -843,15 +865,13 @@ class AlexaShoppingListSync:
         to_complete = []
         alexa_counts = Counter(alexa_list)
         open_ha_counts = Counter()
-        complete_ha_counts = Counter()
+        local_complete_ha_counts = self._collect_local_completions(ha_list, previous_ha_list)
 
         for item in ha_list:
             if item['name'] in updated_new_names:
                 continue
 
-            if item['complete'] == True:
-                complete_ha_counts[item['name']] += 1
-            else:
+            if item['complete'] != True:
                 open_ha_counts[item['name']] += 1
 
         for item_name, count in open_ha_counts.items():
@@ -860,7 +880,7 @@ class AlexaShoppingListSync:
 
         for item_name, alexa_count in alexa_counts.items():
             excess_remote_count = max(alexa_count - open_ha_counts[item_name], 0)
-            completable_count = min(complete_ha_counts[item_name], excess_remote_count)
+            completable_count = min(local_complete_ha_counts[item_name], excess_remote_count)
             to_complete.extend([item_name] * completable_count)
 
         remote_completed_counts = Counter(alexa_completed_in_remote)
@@ -927,7 +947,13 @@ class AlexaShoppingListSync:
         visible_refreshed_items = await loop.run_in_executor(
             None, self._filter_alexa_items, refreshed_items, protected_refreshed_items
         )
-        merged_ha_list = await loop.run_in_executor(None, self._merge_ha_with_alexa, desired_ha_list, visible_refreshed_items)
+        merged_ha_list = await loop.run_in_executor(
+            None,
+            self._merge_ha_with_alexa,
+            desired_ha_list,
+            visible_refreshed_items,
+            local_complete_ha_counts,
+        )
         await self._debug_log_entry(logger, "Merged HA list before apply: "+json.dumps(merged_ha_list))
         applied_ha_list = await self._apply_ha_shopping_list(merged_ha_list)
         await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_items, applied_ha_list)

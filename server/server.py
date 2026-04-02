@@ -402,18 +402,6 @@ async def main():
     logger.info("======================================================================")
     logger.info("Alexa Shopping List server started on port "+str(listen_port))
 
-    try:
-        instance = _start_alexa()
-        requires_login = await asyncio.to_thread(instance.requires_login)
-        if requires_login:
-            logger.info("Skipping Alexa HTTP API startup smoke test: not authenticated")
-        else:
-            await asyncio.to_thread(instance.run_http_api_startup_smoke_test)
-    except Exception as e:
-        logger.error(f"Alexa HTTP API startup smoke test failed: {e}", exc_info=True)
-    finally:
-        _stop_alexa()
-
     signal.signal(signal.SIGINT, _signal_handler)
     await server.wait_closed()
 

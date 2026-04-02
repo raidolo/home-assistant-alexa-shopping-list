@@ -14,7 +14,6 @@ import os
 import logging
 import datetime
 import urllib.request
-import urllib.error
 
 logger = logging.getLogger(__name__)
 
@@ -347,6 +346,53 @@ class AlexaShoppingList:
         if not response.get("ok") or not isinstance(response.get("json"), dict):
             raise RuntimeError("Invalid getlistitems HTTP response")
         return response["json"]
+
+
+    def _normalize_http_list_payload(self, payload):
+        normalized = []
+
+        if not isinstance(payload, dict):
+            return normalized
+
+        for list_payload in payload.values():
+            if not isinstance(list_payload, dict):
+                continue
+
+            list_info = list_payload.get("listInfo", {})
+            list_id = list_info.get("listId")
+            default_list = bool(list_info.get("defaultList"))
+
+            for item in list_payload.get("listItems", []):
+                if not isinstance(item, dict):
+                    continue
+                item_id = item.get("id")
+                item_name = item.get("value")
+                if not item_id or not item_name:
+                    continue
+                normalized.append({
+                    "id": item_id,
+                    "name": item_name,
+                    "complete": bool(item.get("completed", False)),
+                    "createdDateTime": item.get("createdDateTime"),
+                    "updatedDateTime": item.get("updatedDateTime"),
+                    "version": item.get("version"),
+                    "listId": item.get("listId") or list_id,
+                    "defaultList": default_list,
+                })
+
+        normalized.sort(
+            key=lambda item: (
+                0 if not item.get("complete") else 1,
+                int(item.get("createdDateTime") or 0),
+                int(item.get("updatedDateTime") or 0),
+                item.get("id") or "",
+            )
+        )
+        return normalized
+
+
+    def _get_alexa_list_http(self):
+        return self._normalize_http_list_payload(self._http_get_list_items_json())
 
 
     def _http_default_list_payload(self):
@@ -695,6 +741,13 @@ fetch(url, {
 
 
     def get_alexa_list(self, refresh: bool = True):
+        try:
+            alexa_items = self._get_alexa_list_http()
+            logger.info("Alexa list read via HTTP API")
+            return alexa_items
+        except Exception as http_error:
+            logger.warning(f"Alexa HTTP list read failed, falling back to DOM scrape: {http_error}")
+
         self._prepare_alexa_list_page(refresh)
         try:
             http_api_result, http_dump_path = self._debug_dump_getlistitems_api_http()
@@ -755,7 +808,19 @@ fetch(url, {
                     time.sleep(1)
                     continue
 
-        return found
+        return [
+            {
+                "id": None,
+                "name": item_name,
+                "complete": False,
+                "createdDateTime": None,
+                "updatedDateTime": None,
+                "version": None,
+                "listId": None,
+                "defaultList": True,
+            }
+            for item_name in found
+        ]
 
 
     def _get_alexa_list_item_element(self, item: str, ensure_page_ready: bool = True):

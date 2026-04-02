@@ -333,11 +333,7 @@ class AlexaShoppingListSync:
 
         self._update_completed_ledger(apply_update)
 
-        if logger is not None:
-            logger.debug(
-                "Completed ledger after shopping_list_updated: %s",
-                json.dumps(self._get_completed_ledger(), sort_keys=True),
-            )
+        return
     
 
     def _build_item_id(self, item_name):
@@ -864,18 +860,6 @@ class AlexaShoppingListSync:
         alexa_snapshot = self._normalize_alexa_items(await self._get_list(force))
         alexa_list = self._active_alexa_item_names(alexa_snapshot)
         await self._debug_log_entry(logger, "Alexa list: "+json.dumps(alexa_list))
-        await self._debug_log_entry(
-            logger,
-            "Alexa snapshot: "+json.dumps(self._compact_alexa_snapshot_for_log(alexa_snapshot))
-        )
-        await self._debug_log_entry(logger, "Current HA list: "+json.dumps(ha_list))
-        await self._debug_log_entry(logger, "Previous Alexa list: "+json.dumps(previous_alexa_list))
-        await self._debug_log_entry(
-            logger,
-            "Previous Alexa snapshot: "+json.dumps(self._compact_alexa_snapshot_for_log(previous_alexa_snapshot))
-        )
-        await self._debug_log_entry(logger, "Previous HA list: "+json.dumps(previous_ha_list))
-        await self._debug_log_entry(logger, "Completed ledger: "+json.dumps(completed_ledger))
 
         if len(previous_alexa_list) > 0:
             previous_alexa_counts = Counter(previous_alexa_list)
@@ -928,10 +912,6 @@ class AlexaShoppingListSync:
             for item_name in previous_alexa_list
         ])
         completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
-        await self._debug_log_entry(
-            logger,
-            "Completed ledger after seen_on_alexa backfill: "+json.dumps(completed_ledger)
-        )
         # Temporarily disable ledger-based protection while stabilizing the todo.*
         # primitive refactor. For now we want to mirror the real list state more
         # directly instead of suppressing or re-completing items from historical memory.
@@ -992,10 +972,6 @@ class AlexaShoppingListSync:
         refreshed_snapshot = self._normalize_alexa_items(await self._get_list())
         refreshed_items = self._active_alexa_item_names(refreshed_snapshot)
         await self._debug_log_entry(logger, "Refreshed Alexa list: "+json.dumps(refreshed_items))
-        await self._debug_log_entry(
-            logger,
-            "Refreshed Alexa snapshot: "+json.dumps(self._compact_alexa_snapshot_for_log(refreshed_snapshot))
-        )
         ignored_refreshed_removed_counts = Counter(to_complete)
         if await loop.run_in_executor(
             None,
@@ -1015,10 +991,6 @@ class AlexaShoppingListSync:
             for item_name in refreshed_items
         ])
         completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
-        await self._debug_log_entry(
-            logger,
-            "Completed ledger after refreshed Alexa backfill: "+json.dumps(completed_ledger)
-        )
         # Keep ledger writes/logging for now, but do not let it alter sync results.
         protected_refreshed_items = []
         desired_ha_list = await loop.run_in_executor(
@@ -1038,11 +1010,6 @@ class AlexaShoppingListSync:
         await self._debug_log_entry(logger, "Merged HA list before apply: "+json.dumps(merged_ha_list))
         applied_ha_list = await self._apply_ha_shopping_list(merged_ha_list)
         await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_snapshot, applied_ha_list)
-        await self._debug_log_entry(
-            logger,
-            "Snapshot Alexa items saved: "+json.dumps(self._compact_alexa_snapshot_for_log(refreshed_snapshot))
-        )
-        await self._debug_log_entry(logger, "Snapshot HA items saved: "+json.dumps(applied_ha_list))
         if self._hasl_refresh is not None:
             await self._hasl_refresh()
 

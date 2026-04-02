@@ -7,17 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [2604.002.00] - 2026-04-02
 
 ### Features
-- **Home Assistant primitive refactor** - The custom component now starts moving away from direct `.shopping_list.json` reconstruction and toward Home Assistant-native list primitives, using `todo.*` APIs as the foundation for reading and applying shopping list changes.
-- **Completion ledger for bidirectional sync** - Added a local completion ledger to keep short-lived sync intent across Home Assistant and Alexa, improving the handling of recently completed items during bidirectional reconciliation.
+- **Home Assistant primitive refactor** - The custom component now moves away from direct `.shopping_list.json` reconstruction and uses Home Assistant-native `todo.*` APIs as the foundation for reading and applying shopping list changes.
+- **Count-based duplicate handling** - Bidirectional sync now treats repeated identical names as counted occurrences, allowing repeated items to be added, completed, and re-imported more predictably across Home Assistant and Alexa.
+- **One-sync completion protection** - Recently completed Home Assistant items now get a short protection window of one sync cycle so immediate Alexa re-adds do not bounce straight back into Home Assistant.
 
 ### Improvements
-- **24-hour re-add protection window** - Recently completed items can now stay protected for up to 24 hours to reduce immediate re-add/re-complete loops when the same item briefly reappears on Alexa.
-- **Duplicate-aware sync groundwork** - Sync logic now begins accounting for repeated identical names as counted occurrences instead of assuming every item name is unique.
+- **New remote item import** - Items newly added on Alexa are now imported into Home Assistant without being mistaken for stale completed entries that should be removed.
+- **Alexa active-count reconciliation** - Alexa completion decisions are now based on the delta between active items on both sides, avoiding false removals when Home Assistant already has completed history for the same name.
 - **Alexa list extraction reliability** - Improved the Alexa virtual-list reader so scrolling no longer re-imports the same visible window repeatedly during list extraction.
+- **Refreshed-delta handling** - Follow-up Alexa refreshes no longer reapply the same completion delta back into Home Assistant after a locally initiated completion sync.
 
 ### Notes
-- **Duplicate handling still under active validation** - Exact duplicate names are now handled more deliberately, but this area is still being refined and needs more real-world testing before it can be considered fully stable.
-- **24-hour protection policy may still evolve** - The temporary protection window for recently completed items is currently retained during the primitive refactor, but its final behavior may change as sync semantics are simplified around Home Assistant-native item IDs.
+- **Home Assistant currently stays authoritative for fresh completions** - If an item is completed in Home Assistant, that completion currently wins for the next sync cycle before later Alexa re-adds are treated as new items again.
+- **Duplicate re-adds are consumed one occurrence at a time** - If an identical item is added again on Alexa between sync runs, only one occurrence is removed on the next completion-propagation sync, and any remaining occurrence is re-imported into Home Assistant on the following sync.
+- **Debug logging temporarily retained** - Extra sync diagnostics are still present in this dev build to validate real-world flows before cleanup.
+- **Behavior still under active validation** - Exact duplicate names and repeated complete/re-add cycles now behave much better, but this area is still being refined with real-world testing before the temporary debug code is removed.
 
 ## [2604.001.00] - 2026-04-01
 

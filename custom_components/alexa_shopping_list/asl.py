@@ -818,6 +818,21 @@ class AlexaShoppingListSync:
         return compact
 
 
+    def _dedupe_ha_items_by_id(self, ha_items):
+        deduped = []
+        seen_ids = set()
+
+        for item in ha_items:
+            item_id = item.get("id")
+            if item_id:
+                if item_id in seen_ids:
+                    continue
+                seen_ids.add(item_id)
+            deduped.append(item)
+
+        return deduped
+
+
     def _find_ha_list_item(self, find, ha_list):
         for item in ha_list:
             if item['name'] == find:
@@ -1295,7 +1310,11 @@ class AlexaShoppingListSync:
             visible_refreshed_items,
             local_complete_ha_counts,
         )
-        merged_ha_list = linked_ha_items + merged_unlinked_ha_list
+        merged_ha_list = await loop.run_in_executor(
+            None,
+            self._dedupe_ha_items_by_id,
+            linked_ha_items + merged_unlinked_ha_list,
+        )
         await self._debug_log_entry(logger, "Merged HA list before apply: "+json.dumps(merged_ha_list))
         applied_ha_list = await self._apply_ha_shopping_list(merged_ha_list)
         item_links = await loop.run_in_executor(

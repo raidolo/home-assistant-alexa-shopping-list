@@ -390,6 +390,16 @@ class AlexaShoppingListSync:
         return hashlib.md5(serialized.encode('utf-8')).hexdigest()
 
 
+    def _ha_items_signature(self, items):
+        signature = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            signature.append((item.get("name"), bool(item.get("complete", False))))
+        signature.sort()
+        return signature
+
+
     async def _todo_get_items(self, statuses=None):
         if self._hass is None:
             return None
@@ -509,8 +519,18 @@ class AlexaShoppingListSync:
 
         for desired_item in additions:
             await self._ha_add_item(desired_item["name"])
+        desired_signature = self._ha_items_signature(desired_items)
+        latest_items = await self._read_ha_shopping_list_async()
+        if self._ha_items_signature(latest_items) == desired_signature:
+            return latest_items
 
-        return await self._read_ha_shopping_list_async()
+        for _ in range(10):
+            await asyncio.sleep(0.2)
+            latest_items = await self._read_ha_shopping_list_async()
+            if self._ha_items_signature(latest_items) == desired_signature:
+                return latest_items
+
+        return latest_items
     
 
     def _read_sync_metadata(self):

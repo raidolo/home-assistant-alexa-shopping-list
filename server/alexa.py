@@ -397,6 +397,19 @@ class AlexaShoppingList:
         return self._normalize_http_list_payload(self._http_get_list_items_json())
 
 
+    def _compact_items_for_log(self, items):
+        compact = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            compact.append({
+                "id": item.get("id"),
+                "name": item.get("name"),
+                "complete": bool(item.get("complete", False)),
+            })
+        return compact
+
+
     def _http_default_list_payload(self):
         payload = self._http_get_list_items_json()
         for list_payload in payload.values():
@@ -406,11 +419,40 @@ class AlexaShoppingList:
         raise RuntimeError("Default Alexa shopping list not found in getlistitems response")
 
 
+    def _http_default_list_id(self):
+        list_payload = self._http_default_list_payload()
+        list_info = list_payload.get("listInfo", {})
+        list_id = list_info.get("listId")
+        if not list_id:
+            raise RuntimeError("Default Alexa shopping listId missing")
+        return list_id
+
+
     def _http_find_item_by_id(self, list_payload, item_id: str):
         for item in list_payload.get("listItems", []):
             if item.get("id") == item_id:
                 return item
         return None
+
+
+    def _http_find_list_item(self, list_payload, value: str, completed=None, prefer_latest=False):
+        candidates = []
+        for item in list_payload.get("listItems", []):
+            if item.get("value") != value:
+                continue
+            if completed is not None and bool(item.get("completed", False)) != completed:
+                continue
+            candidates.append(item)
+
+        if not candidates:
+            return None
+
+        key_fn = lambda item: (
+            int(item.get("createdDateTime", 0) or 0),
+            int(item.get("updatedDateTime", 0) or 0),
+            item.get("id") or "",
+        )
+        return max(candidates, key=key_fn) if prefer_latest else min(candidates, key=key_fn)
 
 
     def _http_find_latest_item_by_value(self, list_payload, value: str):
@@ -427,6 +469,56 @@ class AlexaShoppingList:
                 int(item.get("updatedDateTime", 0)),
             ),
         )
+
+
+    def _http_add_list_item(self, item: str):
+        list_id = self._http_default_list_id()
+        add_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/addlistitem/" + list_id
+        self._http_request_json(
+            add_url,
+            method="POST",
+            payload={
+                "value": item,
+                "listItemMetadata": [],
+            },
+        )
+
+
+    def _http_update_list_item(self, old: str, new: str):
+        list_payload = self._http_default_list_payload()
+        current_item = self._http_find_list_item(list_payload, old, completed=False, prefer_latest=False)
+        if current_item is None:
+            return False
+
+        update_payload = dict(current_item)
+        update_payload["value"] = new
+        update_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/updatelistitem"
+        self._http_request_json(update_url, method="PUT", payload=update_payload)
+        return True
+
+
+    def _http_complete_list_item(self, item: str):
+        list_payload = self._http_default_list_payload()
+        current_item = self._http_find_list_item(list_payload, item, completed=False, prefer_latest=False)
+        if current_item is None:
+            return False
+
+        update_payload = dict(current_item)
+        update_payload["completed"] = True
+        update_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/updatelistitem"
+        self._http_request_json(update_url, method="PUT", payload=update_payload)
+        return True
+
+
+    def _http_remove_list_item(self, item: str):
+        list_payload = self._http_default_list_payload()
+        current_item = self._http_find_list_item(list_payload, item, completed=False, prefer_latest=False)
+        if current_item is None:
+            return False
+
+        delete_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/deletelistitem"
+        self._http_request_json(delete_url, method="DELETE", payload=current_item)
+        return True
 
 
     def run_http_api_startup_smoke_test(self):
@@ -881,6 +973,20 @@ fetch(url, {
 
 
     def _complete_alexa_list_item(self, item: str, refresh_result: bool = True, ensure_page_ready: bool = True):
+        try:
+            completed = self._http_complete_list_item(item)
+            if refresh_result:
+                refreshed = self.get_alexa_list(False)
+                logger.info(
+                    "Alexa HTTP complete result for '%s': %s",
+                    item,
+                    json.dumps(self._compact_items_for_log(refreshed), ensure_ascii=False),
+                )
+                return refreshed
+            return None if completed else None
+        except Exception as http_error:
+            logger.warning(f"Alexa HTTP complete failed for '{item}', falling back to Selenium: {http_error}")
+
         if ensure_page_ready:
             self._prepare_alexa_list_page(False)
 
@@ -904,6 +1010,21 @@ fetch(url, {
 
 
     def _add_alexa_list_item(self, item: str, refresh_result: bool = True, ensure_page_ready: bool = True):
+        try:
+            logger.info(f"Alexa add requested: {item}")
+            self._http_add_list_item(item)
+            if refresh_result:
+                refreshed = self.get_alexa_list(False)
+                logger.info(
+                    "Alexa add result for '%s': %s",
+                    item,
+                    json.dumps(self._compact_items_for_log(refreshed), ensure_ascii=False),
+                )
+                return refreshed
+            return None
+        except Exception as http_error:
+            logger.warning(f"Alexa HTTP add failed for '{item}', falling back to Selenium: {http_error}")
+
         if ensure_page_ready:
             self._prepare_alexa_list_page(False)
 
@@ -932,6 +1053,14 @@ fetch(url, {
 
 
     def _update_alexa_list_item(self, old: str, new: str, refresh_result: bool = True, ensure_page_ready: bool = True):
+        try:
+            updated = self._http_update_list_item(old, new)
+            if refresh_result:
+                return self.get_alexa_list(False)
+            return None if updated else None
+        except Exception as http_error:
+            logger.warning(f"Alexa HTTP update failed for '{old}' -> '{new}', falling back to Selenium: {http_error}")
+
         if ensure_page_ready:
             self._prepare_alexa_list_page(False)
 
@@ -960,6 +1089,14 @@ fetch(url, {
 
 
     def _remove_alexa_list_item(self, item: str, refresh_result: bool = True, ensure_page_ready: bool = True):
+        try:
+            removed = self._http_remove_list_item(item)
+            if refresh_result:
+                return self.get_alexa_list(False)
+            return None if removed else None
+        except Exception as http_error:
+            logger.warning(f"Alexa HTTP delete failed for '{item}', falling back to Selenium: {http_error}")
+
         # In large lists, items towards the end are sometimes not found on the first try
         # In cases like these, retry if the element is not found
         if ensure_page_ready:
@@ -1031,7 +1168,10 @@ fetch(url, {
             self._complete_alexa_list_item(item, refresh_result=False, ensure_page_ready=False)
 
         refreshed = self.get_alexa_list(False)
-        logger.info(f"Alexa bulk apply result: {json.dumps(refreshed, ensure_ascii=False)}")
+        logger.info(
+            "Alexa bulk apply result: %s",
+            json.dumps(self._compact_items_for_log(refreshed), ensure_ascii=False),
+        )
         return refreshed
 
     # ============================================================

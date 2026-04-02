@@ -649,22 +649,22 @@ class AlexaShoppingListSync:
 
     def _merge_ha_with_alexa(self, ha_list, alexa_items):
         merged = []
-        remaining_by_name = defaultdict(list)
-        for item in ha_list:
-            remaining_by_name[item["name"]].append(item)
+        remaining_active_by_name = defaultdict(list)
+        remaining_completed = []
 
-        for item_name, items in remaining_by_name.items():
-            # Prefer consuming already-active HA items for active Alexa matches,
-            # leaving completed items behind as completed history.
-            remaining_by_name[item_name] = sorted(
-                items,
-                key=lambda item: bool(item.get("complete", False))
-            )
+        for item in ha_list:
+            if bool(item.get("complete", False)):
+                remaining_completed.append(item)
+            else:
+                remaining_active_by_name[item["name"]].append(item)
 
         for item_name in alexa_items:
-            existing_items = remaining_by_name.get(item_name, [])
+            existing_items = remaining_active_by_name.get(item_name, [])
             if len(existing_items) == 0:
-                merged.append(self._default_ha_item(item_name, complete=False))
+                # Home Assistant currently wins over remote reopen semantics:
+                # do not resurrect completed HA items or create new active ones
+                # for Alexa items with the same name during the final merge.
+                continue
             else:
                 existing = existing_items.pop(0)
                 merged.append({
@@ -673,13 +673,20 @@ class AlexaShoppingListSync:
                     "complete": False
                 })
 
-        for remaining_items in remaining_by_name.values():
+        for remaining_items in remaining_active_by_name.values():
             for item in remaining_items:
                 merged.append({
                     "id": item.get("id") or self._build_item_id(item["name"]),
                     "name": item["name"],
-                    "complete": bool(item.get("complete", False))
+                    "complete": False
                 })
+
+        for item in remaining_completed:
+            merged.append({
+                "id": item.get("id") or self._build_item_id(item["name"]),
+                "name": item["name"],
+                "complete": True
+            })
 
         return merged
 

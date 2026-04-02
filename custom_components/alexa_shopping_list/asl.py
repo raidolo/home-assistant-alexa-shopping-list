@@ -840,12 +840,15 @@ class AlexaShoppingListSync:
         to_complete = []
         alexa_counts = Counter(alexa_list)
         open_ha_counts = Counter()
+        complete_ha_counts = Counter()
 
         for item in ha_list:
             if item['name'] in updated_new_names:
                 continue
 
-            if item['complete'] != True:
+            if item['complete'] == True:
+                complete_ha_counts[item['name']] += 1
+            else:
                 open_ha_counts[item['name']] += 1
 
         for item_name, count in open_ha_counts.items():
@@ -854,7 +857,8 @@ class AlexaShoppingListSync:
 
         for item_name, alexa_count in alexa_counts.items():
             excess_remote_count = max(alexa_count - open_ha_counts[item_name], 0)
-            to_complete.extend([item_name] * excess_remote_count)
+            completable_count = min(complete_ha_counts[item_name], excess_remote_count)
+            to_complete.extend([item_name] * completable_count)
 
         remote_completed_counts = Counter(alexa_completed_in_remote)
         if remote_completed_counts:

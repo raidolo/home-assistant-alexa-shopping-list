@@ -610,6 +610,29 @@ class AlexaShoppingListSync:
         return updates
 
 
+    def _collect_local_open_count_drops(self, ha_list, previous_ha_list):
+        previous_open_counts = Counter()
+        current_open_counts = Counter()
+
+        for item in previous_ha_list:
+            if item.get("complete") == True:
+                continue
+            previous_open_counts[item["name"]] += 1
+
+        for item in ha_list:
+            if item.get("complete") == True:
+                continue
+            current_open_counts[item["name"]] += 1
+
+        dropped_counts = Counter()
+        for item_name, previous_count in previous_open_counts.items():
+            dropped_count = max(previous_count - current_open_counts[item_name], 0)
+            if dropped_count > 0:
+                dropped_counts[item_name] = dropped_count
+
+        return dropped_counts
+
+
     def _mark_items_completed(self, ha_list, item_names):
         changed = False
         for item_name, count in Counter(item_names).items():
@@ -756,10 +779,27 @@ class AlexaShoppingListSync:
         if len(previous_alexa_list) > 0:
             previous_alexa_counts = Counter(previous_alexa_list)
             current_alexa_counts = Counter(alexa_list)
+            local_open_count_drops = self._collect_local_open_count_drops(ha_list, previous_ha_list)
             alexa_completed_in_remote = []
             for item_name, previous_count in previous_alexa_counts.items():
                 removed_count = max(previous_count - current_alexa_counts[item_name], 0)
-                alexa_completed_in_remote.extend([item_name] * removed_count)
+                local_drop_count = local_open_count_drops[item_name]
+                effective_removed_count = max(removed_count - local_drop_count, 0)
+                if local_drop_count > 0 and effective_removed_count != removed_count:
+                    await self._debug_log_entry(
+                        logger,
+                        "Filtered Alexa removals by local HA open-count drop for "
+                        + item_name
+                        + ": "
+                        + json.dumps(
+                            {
+                                "remote_removed": removed_count,
+                                "local_open_drop": local_drop_count,
+                                "effective_remote_removed": effective_removed_count,
+                            }
+                        ),
+                    )
+                alexa_completed_in_remote.extend([item_name] * effective_removed_count)
 
             if self._mark_items_completed(ha_list, alexa_completed_in_remote):
                 await self._debug_log_entry(

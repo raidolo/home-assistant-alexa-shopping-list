@@ -537,9 +537,14 @@ class AlexaShoppingList:
         return True
 
 
-    def _http_complete_list_item(self, item: str):
+    def _http_complete_list_item(self, item: str, alexa_id: str = None):
         list_payload = self._http_default_list_payload()
-        current_item = self._http_find_list_item(list_payload, item, completed=False, prefer_latest=False)
+        if alexa_id:
+            current_item = self._http_find_item_by_id(list_payload, alexa_id)
+            if current_item is not None and bool(current_item.get("completed", False)):
+                current_item = None
+        else:
+            current_item = self._http_find_list_item(list_payload, item, completed=False, prefer_latest=False)
         if current_item is None:
             return False
 
@@ -1013,13 +1018,13 @@ fetch(url, {
         return checkbox
 
 
-    def complete_alexa_list_item(self, item: str):
-        return self._complete_alexa_list_item(item, refresh_result=True)
+    def complete_alexa_list_item(self, item: str, alexa_id: str = None):
+        return self._complete_alexa_list_item(item, refresh_result=True, alexa_id=alexa_id)
 
 
-    def _complete_alexa_list_item(self, item: str, refresh_result: bool = True, ensure_page_ready: bool = True):
+    def _complete_alexa_list_item(self, item: str, refresh_result: bool = True, ensure_page_ready: bool = True, alexa_id: str = None):
         try:
-            completed = self._http_complete_list_item(item)
+            completed = self._http_complete_list_item(item, alexa_id=alexa_id)
             if refresh_result:
                 refreshed = self.get_alexa_list(False)
                 logger.info(
@@ -1216,7 +1221,15 @@ fetch(url, {
 
         for item in complete_items:
             logger.info(f"Alexa bulk complete item: {item}")
-            self._complete_alexa_list_item(item, refresh_result=False, ensure_page_ready=False)
+            if isinstance(item, dict):
+                self._complete_alexa_list_item(
+                    item.get("name") or "",
+                    refresh_result=False,
+                    ensure_page_ready=False,
+                    alexa_id=item.get("alexa_id"),
+                )
+            else:
+                self._complete_alexa_list_item(item, refresh_result=False, ensure_page_ready=False)
 
         refreshed = self.get_alexa_list(False)
         logger.info(

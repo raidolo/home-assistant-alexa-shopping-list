@@ -916,6 +916,8 @@ class AlexaShoppingListSync:
         await self._debug_log_entry(logger, "Merged HA list before apply: "+json.dumps(merged_ha_list))
         applied_ha_list = await self._apply_ha_shopping_list(merged_ha_list)
         await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_items, applied_ha_list)
+        await self._debug_log_entry(logger, "Snapshot Alexa items saved: "+json.dumps(refreshed_items))
+        await self._debug_log_entry(logger, "Snapshot HA items saved: "+json.dumps(applied_ha_list))
         if self._hasl_refresh is not None:
             await self._hasl_refresh()
 

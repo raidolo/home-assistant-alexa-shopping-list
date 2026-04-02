@@ -783,13 +783,24 @@ class AlexaShoppingListSync:
         return filtered
 
 
-    def _filter_unlinked_ha_items(self, ha_items, links):
+    def _filter_unlinked_ha_items(self, ha_items, links, alexa_items=None):
         filtered = []
         links = links or {}
+        alexa_items_by_id = {
+            item.get("id"): item
+            for item in self._normalize_alexa_items(alexa_items or [])
+            if item.get("id")
+        }
         for item in ha_items:
             item_id = item.get("id")
             if item_id and item_id in links:
-                continue
+                linked_alexa_item = alexa_items_by_id.get(links[item_id])
+                if (
+                    linked_alexa_item is not None
+                    and bool(linked_alexa_item.get("complete", False)) is False
+                    and linked_alexa_item.get("name") == item.get("name")
+                ):
+                    continue
             filtered.append(item)
         return filtered
 
@@ -1106,9 +1117,11 @@ class AlexaShoppingListSync:
         unlinked_alexa_list = await loop.run_in_executor(
             None, self._filter_unlinked_alexa_active_names, alexa_snapshot, item_links
         )
-        unlinked_ha_list = await loop.run_in_executor(None, self._filter_unlinked_ha_items, ha_list, item_links)
+        unlinked_ha_list = await loop.run_in_executor(
+            None, self._filter_unlinked_ha_items, ha_list, item_links, alexa_snapshot
+        )
         unlinked_previous_ha_list = await loop.run_in_executor(
-            None, self._filter_unlinked_ha_items, previous_ha_list, item_links
+            None, self._filter_unlinked_ha_items, previous_ha_list, item_links, previous_alexa_snapshot
         )
 
         if len(unlinked_previous_alexa_list) > 0:
@@ -1270,7 +1283,7 @@ class AlexaShoppingListSync:
         await self._debug_log_entry(logger, "Desired HA list before merge: "+json.dumps(desired_ha_list))
         linked_ha_items = [item for item in desired_ha_list if item.get("id") in item_links]
         unlinked_desired_ha_list = await loop.run_in_executor(
-            None, self._filter_unlinked_ha_items, desired_ha_list, item_links
+            None, self._filter_unlinked_ha_items, desired_ha_list, item_links, refreshed_snapshot
         )
         visible_refreshed_items = await loop.run_in_executor(
             None, self._filter_alexa_items, unlinked_refreshed_items, protected_refreshed_items

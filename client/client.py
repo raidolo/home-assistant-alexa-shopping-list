@@ -57,6 +57,44 @@ class WebSocketClient:
         if "error" in response:
             return response['error']
         return None
+
+
+    def _print_list_result(self, result):
+        if not isinstance(result, list):
+            print(json.dumps(result, ensure_ascii=False))
+            return
+
+        if len(result) == 0:
+            print("[]")
+            return
+
+        for item in result:
+            if isinstance(item, str):
+                print(f"- {item}")
+                continue
+
+            if not isinstance(item, dict):
+                print(json.dumps(item, ensure_ascii=False))
+                continue
+
+            item_name = item.get("name") or item.get("value") or "?"
+            item_id = item.get("id")
+            item_complete = bool(item.get("complete", item.get("completed", False)))
+            created_at = item.get("createdDateTime")
+            updated_at = item.get("updatedDateTime")
+
+            print(
+                json.dumps(
+                    {
+                        "id": item_id,
+                        "name": item_name,
+                        "complete": item_complete,
+                        "createdDateTime": created_at,
+                        "updatedDateTime": updated_at,
+                    },
+                    ensure_ascii=False,
+                )
+            )
         
 
     # ============================================================
@@ -206,7 +244,7 @@ class WebSocketClient:
     async def _cmd_get_shopping_list(self):
         response = await self._send_command("get_list")
         if self._command_successful(response):
-            print(json.dumps(self._command_result(response)))
+            self._print_list_result(self._command_result(response))
             return
         print("ERROR: "+self._command_error(response))
     
@@ -214,7 +252,7 @@ class WebSocketClient:
     async def _cmd_add_shopping_list_item(self, item):
         response = await self._send_command("add_item", item=item)
         if self._command_successful(response):
-            print(json.dumps(self._command_result(response)))
+            self._print_list_result(self._command_result(response))
             return
         print("ERROR: "+self._command_error(response))
     
@@ -222,7 +260,7 @@ class WebSocketClient:
     async def _cmd_update_shopping_list_item(self, old, new):
         response = await self._send_command("update_item", old=old, new=new)
         if self._command_successful(response):
-            print(json.dumps(self._command_result(response)))
+            self._print_list_result(self._command_result(response))
             return
         print("ERROR: "+self._command_error(response))
     
@@ -230,7 +268,7 @@ class WebSocketClient:
     async def _cmd_remove_shopping_list_item(self, item):
         response = await self._send_command("remove_item", item=item)
         if self._command_successful(response):
-            print(json.dumps(self._command_result(response)))
+            self._print_list_result(self._command_result(response))
             return
         print("ERROR: "+self._command_error(response))
 

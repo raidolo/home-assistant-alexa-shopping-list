@@ -14,6 +14,7 @@ import os
 import logging
 import datetime
 import urllib.request
+import urllib.error
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +268,209 @@ class AlexaShoppingList:
 
         logger.info(f"Alexa getlistitems HTTP dump saved to {dump_path}")
         return result, dump_path
+
+
+    def _http_dump_dir(self):
+        preferred = "/config"
+        if os.path.isdir(preferred) and os.access(preferred, os.W_OK):
+            return preferred
+        if self.cookies_path and os.path.isdir(self.cookies_path) and os.access(self.cookies_path, os.W_OK):
+            return self.cookies_path
+        return self._get_file_location()
+
+
+    def _http_dump_path(self, suffix: str):
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S%f")
+        filename = f"alexa_http_smoke_{suffix}_{timestamp}.json"
+        return os.path.join(self._http_dump_dir(), filename)
+
+
+    def _http_write_dump(self, suffix: str, payload):
+        dump_path = self._http_dump_path(suffix)
+        with open(dump_path, "w", encoding="utf-8") as dump_file:
+            json.dump(payload, dump_file, indent=2, ensure_ascii=False)
+        logger.info(f"Alexa HTTP smoke dump saved to {dump_path}")
+        return dump_path
+
+
+    def _http_cookie_header(self):
+        cookie_header = "; ".join(
+            f"{cookie.get('name')}={cookie.get('value')}"
+            for cookie in self._read_cookie_cache()
+            if cookie.get("name") and cookie.get("value") is not None
+        )
+
+        if cookie_header == "":
+            raise RuntimeError("No cookies available for HTTP request")
+
+        return cookie_header
+
+
+    def _http_request_json(self, url: str, method: str = "GET", payload=None):
+        headers = {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "cookie": self._http_cookie_header(),
+            "referer": "https://www." + self.amazon_url + "/alexaquantum/sp/alexaShoppingList?ref=nav_asl",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        }
+        data = None
+        if payload is not None:
+            data = json.dumps(payload).encode("utf-8")
+
+        request = urllib.request.Request(
+            url,
+            data=data,
+            headers=headers,
+            method=method,
+        )
+
+        with urllib.request.urlopen(request, timeout=WAIT_TIMEOUT) as response:
+            body = response.read().decode("utf-8")
+            parsed = None
+            if body:
+                try:
+                    parsed = json.loads(body)
+                except json.JSONDecodeError:
+                    parsed = None
+            return {
+                "ok": True,
+                "status": response.status,
+                "body": body,
+                "json": parsed,
+            }
+
+
+    def _http_get_list_items_json(self):
+        api_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/getlistitems"
+        response = self._http_request_json(api_url, method="GET")
+        if not response.get("ok") or not isinstance(response.get("json"), dict):
+            raise RuntimeError("Invalid getlistitems HTTP response")
+        return response["json"]
+
+
+    def _http_default_list_payload(self):
+        payload = self._http_get_list_items_json()
+        for list_payload in payload.values():
+            list_info = list_payload.get("listInfo", {})
+            if list_info.get("defaultList"):
+                return list_payload
+        raise RuntimeError("Default Alexa shopping list not found in getlistitems response")
+
+
+    def _http_find_item_by_id(self, list_payload, item_id: str):
+        for item in list_payload.get("listItems", []):
+            if item.get("id") == item_id:
+                return item
+        return None
+
+
+    def _http_find_latest_item_by_value(self, list_payload, value: str):
+        candidates = [
+            item for item in list_payload.get("listItems", [])
+            if item.get("value") == value
+        ]
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda item: (
+                int(item.get("createdDateTime", 0)),
+                int(item.get("updatedDateTime", 0)),
+            ),
+        )
+
+
+    def run_http_api_startup_smoke_test(self):
+        logger.info("Starting Alexa HTTP API startup smoke test")
+
+        default_list = self._http_default_list_payload()
+        list_id = default_list.get("listInfo", {}).get("listId")
+        if not list_id:
+            raise RuntimeError("Default Alexa listId missing from getlistitems response")
+
+        add_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/addlistitem/" + list_id
+        update_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/updatelistitem"
+        delete_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/deletelistitem"
+
+        self._http_request_json(
+            add_url,
+            method="POST",
+            payload={"value": "test", "listItemMetadata": []},
+        )
+        add_dump = self._http_get_list_items_json()
+        self._http_write_dump("_add", add_dump)
+
+        added_default_list = None
+        for list_payload in add_dump.values():
+            list_info = list_payload.get("listInfo", {})
+            if list_info.get("listId") == list_id:
+                added_default_list = list_payload
+                break
+        if added_default_list is None:
+            raise RuntimeError("Default list missing from _add dump")
+
+        added_item = self._http_find_latest_item_by_value(added_default_list, "test")
+        if added_item is None:
+            raise RuntimeError("Unable to find newly added 'test' item")
+
+        renamed_item = dict(added_item)
+        renamed_item["value"] = "test rename"
+        self._http_request_json(update_url, method="PUT", payload=renamed_item)
+        rename_dump = self._http_get_list_items_json()
+        self._http_write_dump("_rename", rename_dump)
+
+        renamed_default_list = None
+        for list_payload in rename_dump.values():
+            list_info = list_payload.get("listInfo", {})
+            if list_info.get("listId") == list_id:
+                renamed_default_list = list_payload
+                break
+        if renamed_default_list is None:
+            raise RuntimeError("Default list missing from _rename dump")
+
+        renamed_item = self._http_find_item_by_id(renamed_default_list, added_item["id"])
+        if renamed_item is None:
+            raise RuntimeError("Unable to find renamed item by id")
+
+        completed_item = dict(renamed_item)
+        completed_item["completed"] = True
+        self._http_request_json(update_url, method="PUT", payload=completed_item)
+        complete_dump = self._http_get_list_items_json()
+        self._http_write_dump("_complete", complete_dump)
+
+        self._http_request_json(
+            add_url,
+            method="POST",
+            payload={"value": "test delete", "listItemMetadata": []},
+        )
+        delete_add_dump = self._http_get_list_items_json()
+        self._http_write_dump("_test_add_per_delete", delete_add_dump)
+
+        delete_default_list = None
+        for list_payload in delete_add_dump.values():
+            list_info = list_payload.get("listInfo", {})
+            if list_info.get("listId") == list_id:
+                delete_default_list = list_payload
+                break
+        if delete_default_list is None:
+            raise RuntimeError("Default list missing from _test_add_per_delete dump")
+
+        delete_item = self._http_find_latest_item_by_value(delete_default_list, "test delete")
+        if delete_item is None:
+            raise RuntimeError("Unable to find newly added 'test delete' item")
+
+        self._http_request_json(delete_url, method="DELETE", payload=delete_item)
+        delete_dump = self._http_get_list_items_json()
+        self._http_write_dump("_test_delete", delete_dump)
+
+        logger.info(
+            "Alexa HTTP API startup smoke test completed: add=%s rename=%s complete=%s delete=%s",
+            added_item.get("id"),
+            renamed_item.get("id"),
+            completed_item.get("id"),
+            delete_item.get("id"),
+        )
 
 
 

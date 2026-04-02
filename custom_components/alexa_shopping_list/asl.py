@@ -611,22 +611,22 @@ class AlexaShoppingListSync:
 
 
     def _collect_local_completions(self, ha_list, previous_ha_list):
-        completed_counts = Counter()
+        previous_completed_counts = Counter()
+        current_completed_counts = Counter()
+
+        for item in previous_ha_list:
+            if item.get("complete") == True:
+                previous_completed_counts[item["name"]] += 1
 
         for item in ha_list:
-            if item.get("complete") != True:
-                continue
+            if item.get("complete") == True:
+                current_completed_counts[item["name"]] += 1
 
-            item_id = item.get("id")
-            if not item_id:
-                continue
-
-            previous_item = self._find_ha_list_item_by_id(item_id, previous_ha_list)
-            if previous_item is None:
-                continue
-
-            if previous_item.get("complete") == False:
-                completed_counts[item["name"]] += 1
+        completed_counts = Counter()
+        for item_name, current_count in current_completed_counts.items():
+            increased_count = max(current_count - previous_completed_counts[item_name], 0)
+            if increased_count > 0:
+                completed_counts[item_name] = increased_count
 
         return completed_counts
 

@@ -860,6 +860,33 @@ class AlexaShoppingListSync:
         return deduped
 
 
+    def _compact_links_for_log(self, links, ha_items=None, alexa_items=None):
+        ha_items_by_id = {
+            item.get("id"): item
+            for item in (ha_items or [])
+            if item.get("id")
+        }
+        alexa_items_by_id = {
+            item.get("id"): item
+            for item in self._normalize_alexa_items(alexa_items or [])
+            if item.get("id")
+        }
+
+        compact = []
+        for ha_item_id, alexa_item_id in sorted((links or {}).items()):
+            ha_item = ha_items_by_id.get(ha_item_id, {})
+            alexa_item = alexa_items_by_id.get(alexa_item_id, {})
+            compact.append({
+                "ha_id": ha_item_id,
+                "ha_name": ha_item.get("name"),
+                "ha_complete": bool(ha_item.get("complete", False)),
+                "alexa_id": alexa_item_id,
+                "alexa_name": alexa_item.get("name"),
+                "alexa_complete": bool(alexa_item.get("complete", False)),
+            })
+        return compact
+
+
     def _link_added_alexa_items(self, links, ha_items, added_alexa_items):
         normalized_added = self._normalize_alexa_items(added_alexa_items)
         if not normalized_added:
@@ -1136,6 +1163,7 @@ class AlexaShoppingListSync:
         previous_ha_list = await loop.run_in_executor(None, self._get_previous_ha_items)
         completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
         item_links = await loop.run_in_executor(None, self._get_item_links)
+        previous_item_links = dict(item_links)
         
         await self._debug_log_entry(logger, "Loading Alexa shopping list")
         alexa_snapshot = self._normalize_alexa_items(await self._get_list(force))
@@ -1149,6 +1177,14 @@ class AlexaShoppingListSync:
             ha_list,
             alexa_snapshot,
         )
+        if item_links != previous_item_links:
+            await self._debug_log_entry(
+                logger,
+                "Item links after prune: " + json.dumps(
+                    self._compact_links_for_log(item_links, ha_list, alexa_snapshot)
+                ),
+            )
+        previous_item_links = dict(item_links)
         item_links = await loop.run_in_executor(
             None,
             self._bootstrap_item_links,
@@ -1156,6 +1192,14 @@ class AlexaShoppingListSync:
             ha_list,
             alexa_snapshot,
         )
+        if item_links != previous_item_links:
+            await self._debug_log_entry(
+                logger,
+                "Item links after bootstrap: " + json.dumps(
+                    self._compact_links_for_log(item_links, ha_list, alexa_snapshot)
+                ),
+            )
+        previous_item_links = dict(item_links)
         if await loop.run_in_executor(
             None,
             self._apply_remote_linked_changes,
@@ -1373,6 +1417,14 @@ class AlexaShoppingListSync:
             ha_list,
             added_alexa_items,
         )
+        if item_links != previous_item_links:
+            await self._debug_log_entry(
+                logger,
+                "Item links after add-response linking: " + json.dumps(
+                    self._compact_links_for_log(item_links, ha_list, alexa_snapshot)
+                ),
+            )
+        previous_item_links = dict(item_links)
         
         refreshed_snapshot = self._normalize_alexa_items(await self._get_list())
         refreshed_items = self._active_alexa_item_names(refreshed_snapshot)
@@ -1436,6 +1488,14 @@ class AlexaShoppingListSync:
             applied_ha_list,
             refreshed_snapshot,
         )
+        if item_links != previous_item_links:
+            await self._debug_log_entry(
+                logger,
+                "Item links after final prune: " + json.dumps(
+                    self._compact_links_for_log(item_links, applied_ha_list, refreshed_snapshot)
+                ),
+            )
+        previous_item_links = dict(item_links)
         item_links = await loop.run_in_executor(
             None,
             self._bootstrap_item_links,
@@ -1443,6 +1503,13 @@ class AlexaShoppingListSync:
             applied_ha_list,
             refreshed_snapshot,
         )
+        if item_links != previous_item_links:
+            await self._debug_log_entry(
+                logger,
+                "Item links after final bootstrap: " + json.dumps(
+                    self._compact_links_for_log(item_links, applied_ha_list, refreshed_snapshot)
+                ),
+            )
         await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_snapshot, applied_ha_list)
         await loop.run_in_executor(None, self._set_item_links, item_links)
         if self._hasl_refresh is not None:

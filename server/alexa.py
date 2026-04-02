@@ -14,6 +14,7 @@ import os
 import logging
 import datetime
 import urllib.request
+import urllib.error
 
 logger = logging.getLogger(__name__)
 
@@ -324,8 +325,23 @@ class AlexaShoppingList:
             method=method,
         )
 
-        with urllib.request.urlopen(request, timeout=WAIT_TIMEOUT) as response:
-            body = response.read().decode("utf-8")
+        try:
+            with urllib.request.urlopen(request, timeout=WAIT_TIMEOUT) as response:
+                body = response.read().decode("utf-8")
+                parsed = None
+                if body:
+                    try:
+                        parsed = json.loads(body)
+                    except json.JSONDecodeError:
+                        parsed = None
+                return {
+                    "ok": True,
+                    "status": response.status,
+                    "body": body,
+                    "json": parsed,
+                }
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
             parsed = None
             if body:
                 try:
@@ -333,8 +349,8 @@ class AlexaShoppingList:
                 except json.JSONDecodeError:
                     parsed = None
             return {
-                "ok": True,
-                "status": response.status,
+                "ok": False,
+                "status": error.code,
                 "body": body,
                 "json": parsed,
             }
@@ -346,6 +362,25 @@ class AlexaShoppingList:
         if not response.get("ok") or not isinstance(response.get("json"), dict):
             raise RuntimeError("Invalid getlistitems HTTP response")
         return response["json"]
+
+
+    def _http_requires_login(self):
+        api_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/getlistitems"
+        response = self._http_request_json(api_url, method="GET")
+
+        if response.get("ok") and isinstance(response.get("json"), dict):
+            self.is_authenticated = True
+            return False
+
+        status = response.get("status")
+        body = response.get("body") or ""
+        if status == 401 or "AuthenticationFailure" in body:
+            self.is_authenticated = False
+            return True
+
+        raise RuntimeError(
+            f"Unexpected auth check response: status={status}, body={body[:200]}"
+        )
 
 
     def _normalize_http_list_payload(self, payload):
@@ -620,6 +655,11 @@ class AlexaShoppingList:
 
 
     def requires_login(self):
+        try:
+            return self._http_requires_login()
+        except Exception as http_error:
+            logger.warning(f"HTTP auth check failed, falling back to Selenium auth check: {http_error}")
+
         try:
             self._ensure_driver_is_on_alexa_list()
         except NotAuthenticatedError:

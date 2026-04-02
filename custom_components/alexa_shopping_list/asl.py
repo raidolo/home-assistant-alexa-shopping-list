@@ -673,11 +673,12 @@ class AlexaShoppingListSync:
 
         for item_name, ha_candidates in active_ha_by_name.items():
             alexa_candidates = active_alexa_by_name.get(item_name, [])
-            if len(ha_candidates) == 1 and len(alexa_candidates) == 1:
+            pair_count = min(len(ha_candidates), len(alexa_candidates))
+            for index in range(pair_count):
                 self._link_ha_and_alexa_items(
                     links,
-                    ha_candidates[0].get("id"),
-                    alexa_candidates[0].get("id"),
+                    ha_candidates[index].get("id"),
+                    alexa_candidates[index].get("id"),
                 )
 
         return links

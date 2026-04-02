@@ -1270,6 +1270,33 @@ class AlexaShoppingListSync:
             completable_count = min(local_completion_budget, excess_remote_count)
             to_complete.extend([item_name] * completable_count)
 
+        previous_unlinked_open_ha_counts = Counter()
+        current_unlinked_completed_ha_counts = Counter()
+        for item in unlinked_previous_ha_list:
+            if bool(item.get("complete", False)) is False:
+                previous_unlinked_open_ha_counts[item["name"]] += 1
+        for item in unlinked_ha_list:
+            if bool(item.get("complete", False)):
+                current_unlinked_completed_ha_counts[item["name"]] += 1
+
+        for item_name, alexa_count in alexa_counts.items():
+            if open_ha_counts[item_name] > 0:
+                continue
+            if previous_unlinked_open_ha_counts[item_name] > 0:
+                continue
+            if current_unlinked_completed_ha_counts[item_name] <= 0:
+                continue
+
+            persistent_remote_count = min(previous_alexa_counts[item_name], alexa_count)
+            already_scheduled = sum(
+                1
+                for scheduled in to_complete
+                if not isinstance(scheduled, dict) and scheduled == item_name
+            )
+            carryover_count = max(persistent_remote_count - already_scheduled, 0)
+            if carryover_count > 0:
+                to_complete.extend([item_name] * carryover_count)
+
         remote_completed_counts = Counter(alexa_completed_in_remote)
         if remote_completed_counts:
             filtered_to_complete = []

@@ -4,24 +4,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
-## [2604.002.00] - 2026-04-02
+## [2604.003.00] - 2026-04-03
 
 ### Features
 - **Home Assistant primitive refactor** - The custom component now moves away from direct `.shopping_list.json` reconstruction and uses Home Assistant-native `todo.*` APIs as the foundation for reading and applying shopping list changes.
+- **Amazon HTTP API discovery and adoption** - The integration now reads Alexa shopping list data from Amazon's internal `alexashoppinglists` HTTP API instead of relying on DOM scraping for the main read path.
+- **HTTP CRUD support for Alexa list operations** - Add, rename/update, complete, and delete operations now use Amazon's HTTP endpoints (`addlistitem`, `updatelistitem`, `deletelistitem`) as the primary execution path.
+- **Structured Alexa item model** - Alexa list items are now handled as real structured objects with stable `id`, `completed`, `createdDateTime`, `updatedDateTime`, `version`, and `listId` fields.
 - **Count-based duplicate handling** - Bidirectional sync now treats repeated identical names as counted occurrences, allowing repeated items to be added, completed, and re-imported more predictably across Home Assistant and Alexa.
-- **One-sync completion protection** - Recently completed Home Assistant items now get a short protection window of one sync cycle so immediate Alexa re-adds do not bounce straight back into Home Assistant.
+- **First step toward id-first sync** - The sync metadata now starts persisting `ha_id -> alexa_id` links so linked items can be handled by stable identity instead of name-only heuristics.
 
 ### Improvements
+- **Instant sync feel** - Normal sync runs are now dramatically faster because the hot path no longer has to drive Chromium through list reads and item mutations.
 - **New remote item import** - Items newly added on Alexa are now imported into Home Assistant without being mistaken for stale completed entries that should be removed.
 - **Alexa active-count reconciliation** - Alexa completion decisions are now based on the delta between active items on both sides, avoiding false removals when Home Assistant already has completed history for the same name.
-- **Alexa list extraction reliability** - Improved the Alexa virtual-list reader so scrolling no longer re-imports the same visible window repeatedly during list extraction.
+- **Reliable completed-state visibility** - The sync can now read Amazon's real completed state directly from the API instead of inferring completions only from active-list disappearance.
+- **Reliable remote rename detection** - When an Alexa item keeps the same `id` and changes `value`, the sync now has a trustworthy way to recognize that change as a real rename rather than a delete-plus-add guess.
+- **Default shopping list filtering** - HTTP reads now ignore non-default Amazon lists returned in the same payload, preventing unrelated archived/shared/secondary list content from leaking into Home Assistant.
+- **HTTP-based authentication validation** - Authentication checks now probe the Alexa list HTTP API directly, treating `401` / `AuthenticationFailure` as real session expiry and reducing false "Not authenticated" reports caused by old Selenium-only checks.
 - **Refreshed-delta handling** - Follow-up Alexa refreshes no longer reapply the same completion delta back into Home Assistant after a locally initiated completion sync.
+- **Safer rename routing** - Local Home Assistant renames can now target the correct Alexa item by `alexa_id` once a link exists, instead of always relying on ambiguous name matching.
+- **Immediate add-response linking** - New items created on Alexa from Home Assistant can now be linked immediately from the HTTP `addlistitem` response instead of waiting for a later name-based bootstrap.
+- **Safer linked/unlinked reconciliation** - Stale or semantically invalid links no longer suppress required fallback sync operations for duplicate items.
+- **Stable merged HA output** - The final Home Assistant list merge now deduplicates by Home Assistant item ID, preventing duplicate local records with the same ID from being reintroduced during sync.
 
 ### Notes
-- **Home Assistant currently stays authoritative for fresh completions** - If an item is completed in Home Assistant, that completion currently wins for the next sync cycle before later Alexa re-adds are treated as new items again.
+- **Authentication flow is unchanged for users** - Login still happens through the desktop client by launching a real browser, completing Amazon sign-in there, and saving the resulting cookies to the server. The big change is what happens after login: once cookies exist, sync traffic is now mostly HTTP API driven instead of browser driven.
+- **Selenium is no longer on the hot path** - Chromium/Selenium now mostly remains as a bootstrap/fallback layer for authentication and emergency compatibility. The normal list mirror path is primarily HTTP-based.
+- **One-sync completion protection is no longer a primary feature** - The old historical protection model now plays a much smaller role. Linked items increasingly sync by stable identity, while unlinked edge cases still use limited count-based fallback logic during the transition.
 - **Duplicate re-adds are consumed one occurrence at a time** - If an identical item is added again on Alexa between sync runs, only one occurrence is removed on the next completion-propagation sync, and any remaining occurrence is re-imported into Home Assistant on the following sync.
-- **Debug logging temporarily retained** - Extra sync diagnostics are still present in this dev build to validate real-world flows before cleanup.
-- **Behavior still under active validation** - Exact duplicate names and repeated complete/re-add cycles now behave much better, but this area is still being refined with real-world testing before the temporary debug code is removed.
+- **Linked items are now treated more precisely** - Once a Home Assistant item and an Alexa item are linked by stable ID, rename and completion handling can bypass some of the older name/count heuristics.
+- **The sync is still in a transitional hybrid phase** - Linked items increasingly use id-based logic, while unlinked items still fall back to name/count reconciliation. This is intentional and keeps the refactor safe while migrating real-world lists forward.
+- **Client output is cleaner** - The CLI `list` output now shows a compact human-readable view with all active items and a preview of completed items, instead of dumping the full raw JSON payload.
 
 ## [2604.001.00] - 2026-04-01
 

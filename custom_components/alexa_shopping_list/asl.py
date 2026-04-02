@@ -1239,9 +1239,10 @@ class AlexaShoppingListSync:
             None, self._filter_unlinked_ha_items, previous_ha_list, item_links, previous_alexa_snapshot
         )
 
+        previous_alexa_counts = Counter(unlinked_previous_alexa_list)
+        current_alexa_counts = Counter(unlinked_alexa_list)
+
         if len(unlinked_previous_alexa_list) > 0:
-            previous_alexa_counts = Counter(unlinked_previous_alexa_list)
-            current_alexa_counts = Counter(unlinked_alexa_list)
             local_open_count_drops = self._collect_local_open_count_drops(unlinked_ha_list, unlinked_previous_ha_list)
             local_complete_ha_counts = self._collect_local_completions(unlinked_ha_list, unlinked_previous_ha_list)
             alexa_completed_in_remote = []

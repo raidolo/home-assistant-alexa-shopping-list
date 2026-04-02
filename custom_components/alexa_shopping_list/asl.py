@@ -673,11 +673,11 @@ class AlexaShoppingListSync:
     def _merge_ha_with_alexa(self, ha_list, alexa_items):
         merged = []
         remaining_active_by_name = defaultdict(list)
-        remaining_completed = []
+        remaining_completed_by_name = defaultdict(list)
 
         for item in ha_list:
             if bool(item.get("complete", False)):
-                remaining_completed.append(item)
+                remaining_completed_by_name[item["name"]].append(item)
             else:
                 remaining_active_by_name[item["name"]].append(item)
 
@@ -685,9 +685,11 @@ class AlexaShoppingListSync:
             existing_items = remaining_active_by_name.get(item_name, [])
             if len(existing_items) == 0:
                 # Home Assistant currently wins over remote reopen semantics:
-                # do not resurrect completed HA items or create new active ones
-                # for Alexa items with the same name during the final merge.
-                continue
+                # do not resurrect completed HA items with the same name during
+                # the final merge, but still import brand-new remote items.
+                if len(remaining_completed_by_name.get(item_name, [])) > 0:
+                    continue
+                merged.append(self._default_ha_item(item_name, complete=False))
             else:
                 existing = existing_items.pop(0)
                 merged.append({
@@ -704,12 +706,13 @@ class AlexaShoppingListSync:
                     "complete": False
                 })
 
-        for item in remaining_completed:
-            merged.append({
-                "id": item.get("id") or self._build_item_id(item["name"]),
-                "name": item["name"],
-                "complete": True
-            })
+        for remaining_items in remaining_completed_by_name.values():
+            for item in remaining_items:
+                merged.append({
+                    "id": item.get("id") or self._build_item_id(item["name"]),
+                    "name": item["name"],
+                    "complete": True
+                })
 
         return merged
 

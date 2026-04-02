@@ -13,6 +13,7 @@ import json
 import os
 import logging
 import datetime
+import urllib.request
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,63 @@ class AlexaShoppingList:
 
             self.driver.get(self.driver.current_url)
             self._selenium_wait_element((By.ID, 'nav-link-accountList'))
+
+
+    def _read_cookie_cache(self):
+        if not os.path.exists(self._cookie_cache_path()):
+            return []
+
+        try:
+            with open(self._cookie_cache_path(), "r", encoding="utf-8") as file:
+                cookies = json.load(file)
+                if isinstance(cookies, list):
+                    return cookies
+        except Exception:
+            pass
+
+        return []
+
+
+    def _debug_dump_getlistitems_api_http(self):
+        cookie_header = "; ".join(
+            f"{cookie.get('name')}={cookie.get('value')}"
+            for cookie in self._read_cookie_cache()
+            if cookie.get("name") and cookie.get("value") is not None
+        )
+
+        if cookie_header == "":
+            raise RuntimeError("No cookies available for HTTP API dump")
+
+        api_url = "https://www." + self.amazon_url + "/alexashoppinglists/api/getlistitems"
+        request = urllib.request.Request(
+            api_url,
+            headers={
+                "accept": "application/json",
+                "cookie": cookie_header,
+                "referer": "https://www." + self.amazon_url + "/alexaquantum/sp/alexaShoppingList?ref=nav_asl",
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            },
+            method="GET",
+        )
+
+        with urllib.request.urlopen(request, timeout=WAIT_TIMEOUT) as response:
+            body = response.read().decode("utf-8")
+            result = {
+                "ok": True,
+                "status": response.status,
+                "body": body,
+            }
+
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S%f")
+        dump_path = os.path.join("/tmp", f"dump_http_request_getlistitems_{timestamp}.json")
+
+        with open(dump_path, "w", encoding="utf-8") as dump_file:
+            json.dump(result, dump_file, indent=2, ensure_ascii=False)
+
+        logger.info(f"Alexa getlistitems HTTP dump saved to {dump_path}")
+        return result, dump_path
+
+
 
 
     # ============================================================
@@ -434,6 +492,21 @@ fetch(url, {
 
     def get_alexa_list(self, refresh: bool = True):
         self._prepare_alexa_list_page(refresh)
+        try:
+            http_api_result, http_dump_path = self._debug_dump_getlistitems_api_http()
+            logger.info(
+                "Alexa getlistitems HTTP result: %s",
+                json.dumps(
+                    {
+                        "ok": http_api_result.get("ok"),
+                        "status": http_api_result.get("status"),
+                        "dump_path": http_dump_path,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        except Exception as e:
+            logger.info(f"Alexa getlistitems HTTP dump failed: {e}")
         try:
             api_result, dump_path = self._debug_dump_getlistitems_api()
             logger.info(

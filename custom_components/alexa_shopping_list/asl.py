@@ -860,7 +860,7 @@ class AlexaShoppingListSync:
         return deduped
 
 
-    def _compact_links_for_log(self, links, ha_items=None, alexa_items=None):
+    def _compact_links_for_log(self, links, ha_items=None, alexa_items=None, extra_alexa_items=None):
         ha_items_by_id = {
             item.get("id"): item
             for item in (ha_items or [])
@@ -868,7 +868,7 @@ class AlexaShoppingListSync:
         }
         alexa_items_by_id = {
             item.get("id"): item
-            for item in self._normalize_alexa_items(alexa_items or [])
+            for item in self._normalize_alexa_items((alexa_items or []) + (extra_alexa_items or []))
             if item.get("id")
         }
 
@@ -1421,7 +1421,7 @@ class AlexaShoppingListSync:
             await self._debug_log_entry(
                 logger,
                 "Item links after add-response linking: " + json.dumps(
-                    self._compact_links_for_log(item_links, ha_list, alexa_snapshot)
+                    self._compact_links_for_log(item_links, ha_list, alexa_snapshot, added_alexa_items)
                 ),
             )
         previous_item_links = dict(item_links)

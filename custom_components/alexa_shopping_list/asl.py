@@ -602,6 +602,19 @@ class AlexaShoppingListSync:
         ]
 
 
+    def _compact_alexa_snapshot_for_log(self, items):
+        compact = []
+        for item in self._normalize_alexa_items(items):
+            compact.append({
+                "id": item.get("id"),
+                "name": item.get("name"),
+                "complete": bool(item.get("complete", False)),
+                "createdDateTime": item.get("createdDateTime"),
+                "updatedDateTime": item.get("updatedDateTime"),
+            })
+        return compact
+
+
     def _find_ha_list_item(self, find, ha_list):
         for item in ha_list:
             if item['name'] == find:
@@ -851,10 +864,16 @@ class AlexaShoppingListSync:
         alexa_snapshot = self._normalize_alexa_items(await self._get_list(force))
         alexa_list = self._active_alexa_item_names(alexa_snapshot)
         await self._debug_log_entry(logger, "Alexa list: "+json.dumps(alexa_list))
-        await self._debug_log_entry(logger, "Alexa snapshot: "+json.dumps(alexa_snapshot))
+        await self._debug_log_entry(
+            logger,
+            "Alexa snapshot: "+json.dumps(self._compact_alexa_snapshot_for_log(alexa_snapshot))
+        )
         await self._debug_log_entry(logger, "Current HA list: "+json.dumps(ha_list))
         await self._debug_log_entry(logger, "Previous Alexa list: "+json.dumps(previous_alexa_list))
-        await self._debug_log_entry(logger, "Previous Alexa snapshot: "+json.dumps(previous_alexa_snapshot))
+        await self._debug_log_entry(
+            logger,
+            "Previous Alexa snapshot: "+json.dumps(self._compact_alexa_snapshot_for_log(previous_alexa_snapshot))
+        )
         await self._debug_log_entry(logger, "Previous HA list: "+json.dumps(previous_ha_list))
         await self._debug_log_entry(logger, "Completed ledger: "+json.dumps(completed_ledger))
 
@@ -973,7 +992,10 @@ class AlexaShoppingListSync:
         refreshed_snapshot = self._normalize_alexa_items(await self._get_list())
         refreshed_items = self._active_alexa_item_names(refreshed_snapshot)
         await self._debug_log_entry(logger, "Refreshed Alexa list: "+json.dumps(refreshed_items))
-        await self._debug_log_entry(logger, "Refreshed Alexa snapshot: "+json.dumps(refreshed_snapshot))
+        await self._debug_log_entry(
+            logger,
+            "Refreshed Alexa snapshot: "+json.dumps(self._compact_alexa_snapshot_for_log(refreshed_snapshot))
+        )
         ignored_refreshed_removed_counts = Counter(to_complete)
         if await loop.run_in_executor(
             None,
@@ -1016,7 +1038,10 @@ class AlexaShoppingListSync:
         await self._debug_log_entry(logger, "Merged HA list before apply: "+json.dumps(merged_ha_list))
         applied_ha_list = await self._apply_ha_shopping_list(merged_ha_list)
         await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_snapshot, applied_ha_list)
-        await self._debug_log_entry(logger, "Snapshot Alexa items saved: "+json.dumps(refreshed_snapshot))
+        await self._debug_log_entry(
+            logger,
+            "Snapshot Alexa items saved: "+json.dumps(self._compact_alexa_snapshot_for_log(refreshed_snapshot))
+        )
         await self._debug_log_entry(logger, "Snapshot HA items saved: "+json.dumps(applied_ha_list))
         if self._hasl_refresh is not None:
             await self._hasl_refresh()

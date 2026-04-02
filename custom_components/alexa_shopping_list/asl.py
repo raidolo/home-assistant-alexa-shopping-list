@@ -737,13 +737,16 @@ class AlexaShoppingListSync:
         return filtered
 
 
-    def _mark_items_completed_from_count_delta(self, ha_list, before_items, after_items):
+    def _mark_items_completed_from_count_delta(self, ha_list, before_items, after_items, ignored_removed_counts=None):
         changed = False
         before_counts = Counter(before_items)
         after_counts = Counter(after_items)
+        ignored_removed_counts = ignored_removed_counts or Counter()
 
         for item_name, before_count in before_counts.items():
             removed_count = max(before_count - after_counts[item_name], 0)
+            if ignored_removed_counts[item_name] > 0:
+                removed_count = max(removed_count - ignored_removed_counts[item_name], 0)
             if removed_count <= 0:
                 continue
 
@@ -885,7 +888,15 @@ class AlexaShoppingListSync:
         
         refreshed_items = await self._get_list()
         await self._debug_log_entry(logger, "Refreshed Alexa list: "+json.dumps(refreshed_items))
-        if await loop.run_in_executor(None, self._mark_items_completed_from_count_delta, ha_list, alexa_list, refreshed_items):
+        ignored_refreshed_removed_counts = Counter(to_complete)
+        if await loop.run_in_executor(
+            None,
+            self._mark_items_completed_from_count_delta,
+            ha_list,
+            alexa_list,
+            refreshed_items,
+            ignored_refreshed_removed_counts,
+        ):
             await self._debug_log_entry(
                 logger,
                 "Marked HA items as completed from refreshed Alexa delta"

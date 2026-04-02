@@ -748,6 +748,7 @@ class AlexaShoppingListSync:
         await self._debug_log_entry(logger, "Loading Alexa shopping list")
         alexa_list = await self._get_list(force)
         await self._debug_log_entry(logger, "Alexa list: "+json.dumps(alexa_list))
+        await self._debug_log_entry(logger, "Current HA list: "+json.dumps(ha_list))
         await self._debug_log_entry(logger, "Previous Alexa list: "+json.dumps(previous_alexa_list))
         await self._debug_log_entry(logger, "Previous HA list: "+json.dumps(previous_ha_list))
         await self._debug_log_entry(logger, "Completed ledger: "+json.dumps(completed_ledger))
@@ -867,10 +868,12 @@ class AlexaShoppingListSync:
         desired_ha_list = await loop.run_in_executor(
             None, self._strip_names_from_ha_list, filtered_ha_list, protected_refreshed_items
         )
+        await self._debug_log_entry(logger, "Desired HA list before merge: "+json.dumps(desired_ha_list))
         visible_refreshed_items = await loop.run_in_executor(
             None, self._filter_alexa_items, refreshed_items, protected_refreshed_items
         )
         merged_ha_list = await loop.run_in_executor(None, self._merge_ha_with_alexa, desired_ha_list, visible_refreshed_items)
+        await self._debug_log_entry(logger, "Merged HA list before apply: "+json.dumps(merged_ha_list))
         applied_ha_list = await self._apply_ha_shopping_list(merged_ha_list)
         await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_items, applied_ha_list)
         if self._hasl_refresh is not None:

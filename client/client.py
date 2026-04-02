@@ -68,33 +68,43 @@ class WebSocketClient:
             print("[]")
             return
 
+        active_items = []
+        completed_items = []
+
         for item in result:
             if isinstance(item, str):
-                print(f"- {item}")
+                active_items.append(item)
                 continue
 
             if not isinstance(item, dict):
-                print(json.dumps(item, ensure_ascii=False))
                 continue
 
             item_name = item.get("name") or item.get("value") or "?"
-            item_id = item.get("id")
             item_complete = bool(item.get("complete", item.get("completed", False)))
-            created_at = item.get("createdDateTime")
-            updated_at = item.get("updatedDateTime")
 
-            print(
-                json.dumps(
-                    {
-                        "id": item_id,
-                        "name": item_name,
-                        "complete": item_complete,
-                        "createdDateTime": created_at,
-                        "updatedDateTime": updated_at,
-                    },
-                    ensure_ascii=False,
-                )
-            )
+            if item_complete:
+                completed_items.append(item_name)
+            else:
+                active_items.append(item_name)
+
+        print(f"Active ({len(active_items)})")
+        if active_items:
+            for item_name in active_items:
+                print(f'"{item_name}" - active')
+        else:
+            print("(none)")
+
+        print("")
+        completed_preview = completed_items[:20]
+        print(f"Completed ({len(completed_items)})")
+        if completed_preview:
+            for item_name in completed_preview:
+                print(f'"{item_name}" - completed')
+            if len(completed_items) > len(completed_preview):
+                remaining = len(completed_items) - len(completed_preview)
+                print(f"... and {remaining} more completed items")
+        else:
+            print("(none)")
         
 
     # ============================================================

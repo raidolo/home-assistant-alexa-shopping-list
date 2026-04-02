@@ -808,21 +808,24 @@ class AlexaShoppingListSync:
             previous_alexa_counts = Counter(previous_alexa_list)
             current_alexa_counts = Counter(alexa_list)
             local_open_count_drops = self._collect_local_open_count_drops(ha_list, previous_ha_list)
+            local_complete_ha_counts = self._collect_local_completions(ha_list, previous_ha_list)
             alexa_completed_in_remote = []
             for item_name, previous_count in previous_alexa_counts.items():
                 removed_count = max(previous_count - current_alexa_counts[item_name], 0)
                 local_drop_count = local_open_count_drops[item_name]
-                effective_removed_count = max(removed_count - local_drop_count, 0)
-                if local_drop_count > 0 and effective_removed_count != removed_count:
+                local_completed_count = local_complete_ha_counts[item_name]
+                effective_removed_count = max(removed_count - local_drop_count - local_completed_count, 0)
+                if (local_drop_count > 0 or local_completed_count > 0) and effective_removed_count != removed_count:
                     await self._debug_log_entry(
                         logger,
-                        "Filtered Alexa removals by local HA open-count drop for "
+                        "Filtered Alexa removals by local HA changes for "
                         + item_name
                         + ": "
                         + json.dumps(
                             {
                                 "remote_removed": removed_count,
                                 "local_open_drop": local_drop_count,
+                                "local_completed_increase": local_completed_count,
                                 "effective_remote_removed": effective_removed_count,
                             }
                         ),

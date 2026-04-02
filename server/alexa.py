@@ -361,6 +361,8 @@ class AlexaShoppingList:
             list_info = list_payload.get("listInfo", {})
             list_id = list_info.get("listId")
             default_list = bool(list_info.get("defaultList"))
+            if not default_list:
+                continue
 
             for item in list_payload.get("listItems", []):
                 if not isinstance(item, dict):

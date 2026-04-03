@@ -671,18 +671,11 @@ class AlexaShoppingListSync:
             if item.get("id")
         }
 
-        pruned = {}
-        for ha_item_id, alexa_item_id in links.items():
-            ha_item = ha_items_by_id.get(ha_item_id)
-            alexa_item = alexa_items_by_id.get(alexa_item_id)
-            if ha_item is None or alexa_item is None:
-                continue
-            if ha_item.get("name") != alexa_item.get("name"):
-                continue
-
-            pruned[ha_item_id] = alexa_item_id
-
-        return pruned
+        return {
+            ha_item_id: alexa_item_id
+            for ha_item_id, alexa_item_id in links.items()
+            if ha_item_id in ha_items_by_id and alexa_item_id in alexa_items_by_id
+        }
 
 
     def _bootstrap_item_links(self, links, ha_items, alexa_items):

@@ -1433,13 +1433,21 @@ class AlexaShoppingListSync:
             ha_list,
             added_alexa_items,
         )
-        if item_links != previous_item_links:
-            await self._debug_log_entry(
-                logger,
-                "Item links after add-response linking: " + json.dumps(
-                    self._compact_links_for_log(item_links, ha_list, alexa_snapshot, added_alexa_items)
-                ),
-            )
+        if added_alexa_items:
+            if item_links != previous_item_links:
+                await self._debug_log_entry(
+                    logger,
+                    "Item links after add-response linking: " + json.dumps(
+                        self._compact_links_for_log(item_links, ha_list, alexa_snapshot, added_alexa_items)
+                    ),
+                )
+            else:
+                await self._debug_log_entry(
+                    logger,
+                    "Add-response linking left links unchanged for added Alexa items: " + json.dumps(
+                        self._compact_alexa_snapshot_for_log(added_alexa_items)
+                    ),
+                )
         previous_item_links = dict(item_links)
         
         refreshed_snapshot = self._normalize_alexa_items(await self._get_list())

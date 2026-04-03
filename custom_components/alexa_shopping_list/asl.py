@@ -917,6 +917,57 @@ class AlexaShoppingListSync:
         return compact
 
 
+    def _remap_links_to_applied_ha_ids(self, links, desired_ha_items, applied_ha_items):
+        links = links or {}
+        if not links:
+            return {}
+
+        desired_by_id = {
+            item.get("id"): item
+            for item in desired_ha_items
+            if item.get("id")
+        }
+        applied_ids = {
+            item.get("id")
+            for item in applied_ha_items
+            if item.get("id")
+        }
+
+        remapped = {}
+        used_applied_ids = set()
+
+        for ha_item_id, alexa_item_id in links.items():
+            if ha_item_id in applied_ids:
+                remapped[ha_item_id] = alexa_item_id
+                used_applied_ids.add(ha_item_id)
+
+        available_applied_by_signature = defaultdict(list)
+        for item in applied_ha_items:
+            item_id = item.get("id")
+            if not item_id or item_id in used_applied_ids:
+                continue
+            signature = (item.get("name"), bool(item.get("complete", False)))
+            available_applied_by_signature[signature].append(item_id)
+
+        for desired_item in desired_ha_items:
+            desired_id = desired_item.get("id")
+            if not desired_id or desired_id in remapped:
+                continue
+            if desired_id not in links:
+                continue
+
+            signature = (desired_item.get("name"), bool(desired_item.get("complete", False)))
+            candidates = available_applied_by_signature.get(signature, [])
+            if not candidates:
+                continue
+
+            applied_id = candidates.pop(0)
+            remapped[applied_id] = links[desired_id]
+            used_applied_ids.add(applied_id)
+
+        return remapped
+
+
     def _link_added_alexa_items(self, links, ha_items, added_alexa_items):
         normalized_added = self._normalize_alexa_items(added_alexa_items)
         if not normalized_added:
@@ -1522,6 +1573,13 @@ class AlexaShoppingListSync:
         )
         await self._debug_log_entry(logger, "Merged HA list before apply: "+json.dumps(merged_ha_list))
         applied_ha_list = await self._apply_ha_shopping_list(merged_ha_list)
+        item_links = await loop.run_in_executor(
+            None,
+            self._remap_links_to_applied_ha_ids,
+            item_links,
+            merged_ha_list,
+            applied_ha_list,
+        )
         item_links = await loop.run_in_executor(
             None,
             self._prune_item_links,

@@ -1314,12 +1314,6 @@ class AlexaShoppingListSync:
             alexa_snapshot,
             item_links,
         )
-        linked_complete_counts = Counter(
-            item.get("name")
-            for item in linked_complete_items
-            if isinstance(item, dict) and item.get("name")
-        )
-
         await loop.run_in_executor(None, self._update_completed_ledger, lambda ledger: self._clear_ledger_for_active_ha_items(ledger, ha_list))
         await loop.run_in_executor(None, self._update_completed_ledger, lambda ledger: [
             self._mark_ledger_item_seen_on_alexa(ledger, item_name, previous_alexa_list)
@@ -1350,7 +1344,7 @@ class AlexaShoppingListSync:
 
         for item_name, alexa_count in alexa_counts.items():
             excess_remote_count = max(alexa_count - open_ha_counts[item_name], 0)
-            local_completion_budget = local_complete_ha_counts[item_name] + linked_complete_counts[item_name]
+            local_completion_budget = local_complete_ha_counts[item_name]
             completable_count = min(local_completion_budget, excess_remote_count)
             to_complete.extend([item_name] * completable_count)
 

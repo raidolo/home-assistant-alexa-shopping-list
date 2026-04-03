@@ -4,20 +4,20 @@
 
 ### Remove Selenium from the server
 
-- [ ] Remove Selenium imports and driver lifecycle from `server/alexa.py`
-- [ ] Keep only the HTTP/API implementation for auth and list operations
-- [ ] Remove Selenium fallback branches from public methods
-- [ ] Remove Selenium-only exceptions and helpers that are no longer used
-- [ ] Remove production diagnostic code that writes HTTP dumps or mutates the real list for smoke testing
-- [ ] Remove `selenium` from `server/requirements.txt`
-- [ ] Simplify `server/Dockerfile` to a Python-only runtime
-- [ ] Update `README.md` to describe the server as HTTP API-based rather than Selenium-based
+- [x] Remove Selenium imports and driver lifecycle from `server/alexa.py`
+- [x] Keep only the HTTP/API implementation for auth and list operations
+- [x] Remove Selenium fallback branches from public methods
+- [x] Remove Selenium-only exceptions and helpers that are no longer used
+- [x] Remove production diagnostic code that writes HTTP dumps or mutates the real list for smoke testing
+- [x] Remove `selenium` from `server/requirements.txt`
+- [x] Simplify `server/Dockerfile` to a Python-only runtime
+- [x] Update `README.md` to describe the server as HTTP API-based rather than Selenium-based
 
 ### Clean up server lifecycle and state
 
-- [ ] Create a singleton `AlexaShoppingList` instance at server startup
-- [ ] Remove per-command `_start_alexa()` / `_stop_alexa()`
-- [ ] Remove `alexa` and `alexa_running` globals
+- [x] Create a singleton `AlexaShoppingList` instance at server startup
+- [x] Remove per-command `_start_alexa()` / `_stop_alexa()`
+- [x] Remove `alexa` and `alexa_running` globals
 - [ ] Encapsulate mutable server state such as `clients`, `config`, and `server`
 - [ ] Replace the signal handler shutdown path with a loop-safe async shutdown flow
 
@@ -53,8 +53,8 @@
 
 ### Improve HTTP robustness for Amazon APIs
 
-- [ ] Add retries with exponential backoff for transient failures
-- [ ] Handle timeouts and connection errors explicitly
+- [x] Add retries with exponential backoff for transient failures
+- [x] Handle timeouts and connection errors explicitly
 - [ ] Handle HTTP 429 and honor `Retry-After` when present
 - [ ] Make request timeout configurable
 

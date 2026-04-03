@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 
+import http.client
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.request
 
 logger = logging.getLogger(__name__)
 
 HTTP_TIMEOUT = 30
+HTTP_RETRY_DELAYS = (1, 2, 4)
 HTTP_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
@@ -81,35 +84,71 @@ class AlexaShoppingList:
             method=method,
         )
 
-        try:
-            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
-                body = response.read().decode("utf-8")
+        last_error = None
+
+        for attempt, retry_delay in enumerate((0,) + HTTP_RETRY_DELAYS, start=1):
+            try:
+                with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
+                    body = response.read().decode("utf-8")
+                    parsed = None
+                    if body:
+                        try:
+                            parsed = json.loads(body)
+                        except json.JSONDecodeError:
+                            parsed = None
+                    return {
+                        "ok": True,
+                        "status": response.status,
+                        "body": body,
+                        "json": parsed,
+                    }
+            except urllib.error.HTTPError as error:
+                body = error.read().decode("utf-8", errors="replace")
                 parsed = None
                 if body:
                     try:
                         parsed = json.loads(body)
                     except json.JSONDecodeError:
                         parsed = None
+
+                is_transient_http_error = error.code in (429, 500, 502, 503, 504)
+                if is_transient_http_error and attempt <= len(HTTP_RETRY_DELAYS):
+                    logger.warning(
+                        "Transient Alexa HTTP error during %s %s: status=%s, retrying in %ss",
+                        method,
+                        url,
+                        error.code,
+                        retry_delay,
+                    )
+                    time.sleep(retry_delay)
+                    continue
+
                 return {
-                    "ok": True,
-                    "status": response.status,
+                    "ok": False,
+                    "status": error.code,
                     "body": body,
                     "json": parsed,
                 }
-        except urllib.error.HTTPError as error:
-            body = error.read().decode("utf-8", errors="replace")
-            parsed = None
-            if body:
-                try:
-                    parsed = json.loads(body)
-                except json.JSONDecodeError:
-                    parsed = None
-            return {
-                "ok": False,
-                "status": error.code,
-                "body": body,
-                "json": parsed,
-            }
+            except (
+                http.client.IncompleteRead,
+                TimeoutError,
+                urllib.error.URLError,
+                ConnectionError,
+            ) as error:
+                last_error = error
+                if attempt <= len(HTTP_RETRY_DELAYS):
+                    logger.warning(
+                        "Transient Alexa network error during %s %s: %s, retrying in %ss",
+                        method,
+                        url,
+                        error,
+                        retry_delay,
+                    )
+                    time.sleep(retry_delay)
+                    continue
+                raise RuntimeError(f"Amazon HTTP request failed after retries: {error}") from error
+
+        raise RuntimeError(f"Amazon HTTP request failed after retries: {last_error}")
 
     def _ensure_authenticated_response(self, response, action: str):
         status = response.get("status")

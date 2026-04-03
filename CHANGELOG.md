@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2604.003.02] - 2026-04-03
+
+### Bug Fixes
+- **Retry truncated Alexa HTTP responses** - The server now retries transient Amazon HTTP failures such as `IncompleteRead`, timeouts, connection errors, and temporary `429`/`5xx` responses instead of failing the request immediately.
+
+### Improvements
+- **More resilient cookie-based API reads** - Alexa list fetches are now less likely to surface one-off transport glitches to the CLI or Home Assistant when Amazon closes or interrupts a response mid-transfer.
+
 ## [2604.003.01] - 2026-04-03
 
 ### Improvements

@@ -13,7 +13,7 @@
   "requirements": [
     "websockets"
   ],
-  "version": "2604.003.01",
+  "version": "2604.003.02",
   "issue_tracker": "https://github.com/raidolo/home-assistant-alexa-shopping-list/issues",
   "config_flow": true
 }

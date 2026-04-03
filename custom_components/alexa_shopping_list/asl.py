@@ -660,13 +660,29 @@ class AlexaShoppingListSync:
 
 
     def _prune_item_links(self, links, ha_items, alexa_items):
-        valid_ha_ids = {item.get("id") for item in ha_items if item.get("id")}
-        valid_alexa_ids = {item.get("id") for item in self._normalize_alexa_items(alexa_items) if item.get("id")}
-        return {
-            ha_item_id: alexa_item_id
-            for ha_item_id, alexa_item_id in links.items()
-            if ha_item_id in valid_ha_ids and alexa_item_id in valid_alexa_ids
+        ha_items_by_id = {
+            item.get("id"): item
+            for item in ha_items
+            if item.get("id")
         }
+        alexa_items_by_id = {
+            item.get("id"): item
+            for item in self._normalize_alexa_items(alexa_items)
+            if item.get("id")
+        }
+
+        pruned = {}
+        for ha_item_id, alexa_item_id in links.items():
+            ha_item = ha_items_by_id.get(ha_item_id)
+            alexa_item = alexa_items_by_id.get(alexa_item_id)
+            if ha_item is None or alexa_item is None:
+                continue
+            if ha_item.get("name") != alexa_item.get("name"):
+                continue
+
+            pruned[ha_item_id] = alexa_item_id
+
+        return pruned
 
 
     def _bootstrap_item_links(self, links, ha_items, alexa_items):

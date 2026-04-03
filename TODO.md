@@ -18,8 +18,8 @@
 - [x] Create a singleton `AlexaShoppingList` instance at server startup
 - [x] Remove per-command `_start_alexa()` / `_stop_alexa()`
 - [x] Remove `alexa` and `alexa_running` globals
-- [ ] Encapsulate mutable server state such as `clients`, `config`, and `server`
-- [ ] Replace the signal handler shutdown path with a loop-safe async shutdown flow
+- [x] Encapsulate mutable server state such as `clients`, `config`, and `server`
+- [x] Replace the signal handler shutdown path with a loop-safe async shutdown flow
 
 ## Milestone 2: Make sync logic easier to reason about
 

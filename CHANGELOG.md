@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2604.003.03] - 2026-04-04
+
+### Improvements
+- **Encapsulated WebSocket server state** - Refactored the server internals around an explicit `ServerApp` so connection tracking, config state, backend lifecycle, and command routing are no longer spread across mutable module globals.
+- **Safer async shutdown flow** - The server shutdown path now schedules cleanup on the running event loop instead of calling `asyncio.run()` from the signal handler.
+
 ## [2604.003.02] - 2026-04-03
 
 ### Bug Fixes

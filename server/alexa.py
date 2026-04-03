@@ -53,6 +53,29 @@ class AlexaShoppingList:
 
         return []
 
+    def _cookie_debug_summary(self):
+        cookies = self._read_cookie_cache()
+        cookie_names = sorted(
+            cookie.get("name")
+            for cookie in cookies
+            if isinstance(cookie, dict) and cookie.get("name")
+        )
+        return {
+            "cookie_path": self._cookie_cache_path(),
+            "cookie_count": len(cookie_names),
+            "cookie_names": cookie_names,
+        }
+
+    def _response_debug_summary(self, response):
+        body = response.get("body") or ""
+        compact_body = " ".join(body.split())[:300]
+        return {
+            "ok": response.get("ok"),
+            "status": response.get("status"),
+            "json_type": type(response.get("json")).__name__ if response.get("json") is not None else None,
+            "body_snippet": compact_body,
+        }
+
     def _http_cookie_header(self):
         cookie_header = "; ".join(
             f"{cookie.get('name')}={cookie.get('value')}"
@@ -155,6 +178,12 @@ class AlexaShoppingList:
         body = response.get("body") or ""
         if status == 401 or "AuthenticationFailure" in body:
             self.is_authenticated = False
+            logger.warning(
+                "Amazon auth rejected during %s: %s | cookies=%s",
+                action,
+                json.dumps(self._response_debug_summary(response), ensure_ascii=False),
+                json.dumps(self._cookie_debug_summary(), ensure_ascii=False),
+            )
             raise NotAuthenticatedError(f"Amazon authentication required during {action}")
 
         if response.get("ok"):
@@ -185,8 +214,18 @@ class AlexaShoppingList:
         body = response.get("body") or ""
         if status == 401 or "AuthenticationFailure" in body:
             self.is_authenticated = False
+            logger.warning(
+                "Amazon auth check determined login is required: %s | cookies=%s",
+                json.dumps(self._response_debug_summary(response), ensure_ascii=False),
+                json.dumps(self._cookie_debug_summary(), ensure_ascii=False),
+            )
             return True
 
+        logger.warning(
+            "Amazon auth check returned an unexpected response: %s | cookies=%s",
+            json.dumps(self._response_debug_summary(response), ensure_ascii=False),
+            json.dumps(self._cookie_debug_summary(), ensure_ascii=False),
+        )
         raise RuntimeError(
             f"Unexpected auth check response: status={status}, body={body[:200]}"
         )

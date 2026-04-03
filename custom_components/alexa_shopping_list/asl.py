@@ -1234,104 +1234,153 @@ class AlexaShoppingListSync:
             return
         logger.debug(entry)
 
-
-    async def _do_sync(self, loop, logger=None, force=False):
-
+    async def _sync_phase_load_state(self, loop, logger=None, force=False):
         ha_list = await self._read_ha_shopping_list_async()
         original_ha_list_hash = self._ha_items_hash(ha_list)
         previous_alexa_snapshot = await loop.run_in_executor(None, self._get_previous_alexa_snapshot)
-        previous_alexa_list = self._active_alexa_item_names(previous_alexa_snapshot)
         previous_ha_list = await loop.run_in_executor(None, self._get_previous_ha_items)
         completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
         item_links = await loop.run_in_executor(None, self._get_item_links)
-        previous_item_links = dict(item_links)
-        
+
         await self._debug_log_entry(logger, "Loading Alexa shopping list")
         alexa_snapshot = self._normalize_alexa_items(await self._get_list(force))
         alexa_list = self._active_alexa_item_names(alexa_snapshot)
-        await self._debug_log_entry(logger, "Alexa list: "+json.dumps(alexa_list))
+        await self._debug_log_entry(logger, "Alexa list: " + json.dumps(alexa_list))
 
-        item_links = await loop.run_in_executor(
+        return {
+            "ha_list": ha_list,
+            "original_ha_list_hash": original_ha_list_hash,
+            "previous_alexa_snapshot": previous_alexa_snapshot,
+            "previous_alexa_list": self._active_alexa_item_names(previous_alexa_snapshot),
+            "previous_ha_list": previous_ha_list,
+            "completed_ledger": completed_ledger,
+            "item_links": item_links,
+            "previous_item_links": dict(item_links),
+            "alexa_snapshot": alexa_snapshot,
+            "alexa_list": alexa_list,
+        }
+
+    async def _sync_phase_prepare_links(self, loop, state, logger=None):
+        state["item_links"] = await loop.run_in_executor(
             None,
             self._prune_item_links,
-            item_links,
-            ha_list,
-            alexa_snapshot,
+            state["item_links"],
+            state["ha_list"],
+            state["alexa_snapshot"],
         )
-        if item_links != previous_item_links:
+        if state["item_links"] != state["previous_item_links"]:
             await self._debug_log_entry(
                 logger,
-                "Item links after prune: " + json.dumps(
-                    self._compact_links_for_log(item_links, ha_list, alexa_snapshot)
+                "Item links after prune: "
+                + json.dumps(
+                    self._compact_links_for_log(
+                        state["item_links"], state["ha_list"], state["alexa_snapshot"]
+                    )
                 ),
             )
-        previous_item_links = dict(item_links)
-        item_links = await loop.run_in_executor(
+
+        state["previous_item_links"] = dict(state["item_links"])
+        state["item_links"] = await loop.run_in_executor(
             None,
             self._bootstrap_item_links,
-            item_links,
-            ha_list,
-            alexa_snapshot,
+            state["item_links"],
+            state["ha_list"],
+            state["alexa_snapshot"],
         )
-        if item_links != previous_item_links:
+        if state["item_links"] != state["previous_item_links"]:
             await self._debug_log_entry(
                 logger,
-                "Item links after bootstrap: " + json.dumps(
-                    self._compact_links_for_log(item_links, ha_list, alexa_snapshot)
+                "Item links after bootstrap: "
+                + json.dumps(
+                    self._compact_links_for_log(
+                        state["item_links"], state["ha_list"], state["alexa_snapshot"]
+                    )
                 ),
             )
-        previous_item_links = dict(item_links)
+
+        state["previous_item_links"] = dict(state["item_links"])
+        return state
+
+    async def _sync_phase_apply_remote_changes(self, loop, state, logger=None):
         if await loop.run_in_executor(
             None,
             self._apply_remote_linked_changes,
-            ha_list,
-            previous_ha_list,
-            previous_alexa_snapshot,
-            alexa_snapshot,
-            item_links,
+            state["ha_list"],
+            state["previous_ha_list"],
+            state["previous_alexa_snapshot"],
+            state["alexa_snapshot"],
+            state["item_links"],
         ):
             await self._debug_log_entry(logger, "Applied linked remote Alexa changes to HA")
 
         linked_remote_completed_names = await loop.run_in_executor(
             None,
             self._remote_linked_missing_or_completed_items,
-            ha_list,
-            previous_ha_list,
-            previous_alexa_snapshot,
-            alexa_snapshot,
-            item_links,
+            state["ha_list"],
+            state["previous_ha_list"],
+            state["previous_alexa_snapshot"],
+            state["alexa_snapshot"],
+            state["item_links"],
         )
-        if linked_remote_completed_names and self._mark_items_completed(ha_list, linked_remote_completed_names):
+        state["linked_remote_completed_names"] = linked_remote_completed_names
+        if linked_remote_completed_names and self._mark_items_completed(state["ha_list"], linked_remote_completed_names):
             await self._debug_log_entry(
                 logger,
-                "Marked linked HA items as completed from Alexa id changes: "+json.dumps(linked_remote_completed_names)
+                "Marked linked HA items as completed from Alexa id changes: "
+                + json.dumps(linked_remote_completed_names),
             )
 
-        unlinked_previous_alexa_list = await loop.run_in_executor(
-            None, self._filter_unlinked_alexa_active_names, previous_alexa_snapshot, item_links, previous_ha_list
-        )
-        unlinked_alexa_list = await loop.run_in_executor(
-            None, self._filter_unlinked_alexa_active_names, alexa_snapshot, item_links, ha_list
-        )
-        unlinked_ha_list = await loop.run_in_executor(
-            None, self._filter_unlinked_ha_items, ha_list, item_links, alexa_snapshot
-        )
-        unlinked_previous_ha_list = await loop.run_in_executor(
-            None, self._filter_unlinked_ha_items, previous_ha_list, item_links, previous_alexa_snapshot
-        )
+        return state
 
-        previous_alexa_counts = Counter(unlinked_previous_alexa_list)
-        current_alexa_counts = Counter(unlinked_alexa_list)
+    async def _sync_phase_collect_unlinked_views(self, loop, state):
+        state["unlinked_previous_alexa_list"] = await loop.run_in_executor(
+            None,
+            self._filter_unlinked_alexa_active_names,
+            state["previous_alexa_snapshot"],
+            state["item_links"],
+            state["previous_ha_list"],
+        )
+        state["unlinked_alexa_list"] = await loop.run_in_executor(
+            None,
+            self._filter_unlinked_alexa_active_names,
+            state["alexa_snapshot"],
+            state["item_links"],
+            state["ha_list"],
+        )
+        state["unlinked_ha_list"] = await loop.run_in_executor(
+            None,
+            self._filter_unlinked_ha_items,
+            state["ha_list"],
+            state["item_links"],
+            state["alexa_snapshot"],
+        )
+        state["unlinked_previous_ha_list"] = await loop.run_in_executor(
+            None,
+            self._filter_unlinked_ha_items,
+            state["previous_ha_list"],
+            state["item_links"],
+            state["previous_alexa_snapshot"],
+        )
+        state["previous_alexa_counts"] = Counter(state["unlinked_previous_alexa_list"])
+        state["current_alexa_counts"] = Counter(state["unlinked_alexa_list"])
+        return state
 
-        if len(unlinked_previous_alexa_list) > 0:
-            local_open_count_drops = self._collect_local_open_count_drops(unlinked_ha_list, unlinked_previous_ha_list)
-            local_complete_ha_counts = self._collect_local_completions(unlinked_ha_list, unlinked_previous_ha_list)
+    async def _sync_phase_plan_alexa_changes(self, loop, state, logger=None):
+        if len(state["unlinked_previous_alexa_list"]) > 0:
+            local_open_count_drops = self._collect_local_open_count_drops(
+                state["unlinked_ha_list"], state["unlinked_previous_ha_list"]
+            )
+            local_complete_ha_counts = self._collect_local_completions(
+                state["unlinked_ha_list"], state["unlinked_previous_ha_list"]
+            )
             alexa_completed_in_remote = []
-            for item_name, previous_count in previous_alexa_counts.items():
-                removed_count = max(previous_count - current_alexa_counts[item_name], 0)
+            for item_name, previous_count in state["previous_alexa_counts"].items():
+                removed_count = max(previous_count - state["current_alexa_counts"][item_name], 0)
                 local_drop_count = local_open_count_drops[item_name]
                 local_completed_count = local_complete_ha_counts[item_name]
-                effective_removed_count = max(removed_count - local_drop_count - local_completed_count, 0)
+                effective_removed_count = max(
+                    removed_count - local_drop_count - local_completed_count, 0
+                )
                 if (local_drop_count > 0 or local_completed_count > 0) and effective_removed_count != removed_count:
                     await self._debug_log_entry(
                         logger,
@@ -1349,59 +1398,68 @@ class AlexaShoppingListSync:
                     )
                 alexa_completed_in_remote.extend([item_name] * effective_removed_count)
 
-            if self._mark_items_completed(unlinked_ha_list, alexa_completed_in_remote):
+            if self._mark_items_completed(state["unlinked_ha_list"], alexa_completed_in_remote):
                 await self._debug_log_entry(
                     logger,
-                    "Marked HA items as completed from Alexa removals: "+json.dumps(alexa_completed_in_remote)
+                    "Marked HA items as completed from Alexa removals: "
+                    + json.dumps(alexa_completed_in_remote),
                 )
         else:
             alexa_completed_in_remote = []
 
-        # Temporarily disable Alexa-driven reopen while stabilizing the todo.*
-        # sync model. For now Home Assistant is the source of truth and local
-        # completed state wins over remote active items with the same name.
-        alexa_reopened_in_remote = []
+        state["alexa_completed_in_remote"] = alexa_completed_in_remote
+        state["alexa_reopened_in_remote"] = []
+        state["update_items"] = self._collect_local_updates(
+            state["ha_list"],
+            state["previous_ha_list"],
+            state["alexa_list"],
+            item_links=state["item_links"],
+        )
+        state["updated_new_names"] = {update["new"] for update in state["update_items"]}
+        await self._debug_log_entry(logger, "To update on alexa: " + json.dumps(state["update_items"]))
 
-        update_items = self._collect_local_updates(ha_list, previous_ha_list, alexa_list, item_links=item_links)
-        updated_new_names = {update['new'] for update in update_items}
-        await self._debug_log_entry(logger, "To update on alexa: "+json.dumps(update_items))
-
-        linked_complete_items = await loop.run_in_executor(
+        state["linked_complete_items"] = await loop.run_in_executor(
             None,
             self._collect_linked_local_completions,
-            ha_list,
-            previous_ha_list,
-            alexa_snapshot,
-            item_links,
+            state["ha_list"],
+            state["previous_ha_list"],
+            state["alexa_snapshot"],
+            state["item_links"],
         )
-        linked_complete_counts = Counter(
+        state["linked_complete_counts"] = Counter(
             item.get("name")
-            for item in linked_complete_items
+            for item in state["linked_complete_items"]
             if isinstance(item, dict) and item.get("name")
         )
-        await loop.run_in_executor(None, self._update_completed_ledger, lambda ledger: self._clear_ledger_for_active_ha_items(ledger, ha_list))
-        await loop.run_in_executor(None, self._update_completed_ledger, lambda ledger: [
-            self._mark_ledger_item_seen_on_alexa(ledger, item_name, previous_alexa_list)
-            for item_name in previous_alexa_list
-        ])
-        completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
-        # Temporarily disable ledger-based protection while stabilizing the todo.*
-        # primitive refactor. For now we want to mirror the real list state more
-        # directly instead of suppressing or re-completing items from historical memory.
-        protected_alexa_items = []
+        await loop.run_in_executor(
+            None,
+            self._update_completed_ledger,
+            lambda ledger: self._clear_ledger_for_active_ha_items(ledger, state["ha_list"]),
+        )
+        await loop.run_in_executor(
+            None,
+            self._update_completed_ledger,
+            lambda ledger: [
+                self._mark_ledger_item_seen_on_alexa(ledger, item_name, state["previous_alexa_list"])
+                for item_name in state["previous_alexa_list"]
+            ],
+        )
+        state["completed_ledger"] = await loop.run_in_executor(None, self._get_completed_ledger)
+        state["protected_alexa_items"] = []
 
         to_add = []
-        to_complete = list(linked_complete_items)
-        alexa_counts = Counter(unlinked_alexa_list)
+        to_complete = list(state["linked_complete_items"])
+        alexa_counts = Counter(state["unlinked_alexa_list"])
         open_ha_counts = Counter()
-        local_complete_ha_counts = self._collect_local_completions(unlinked_ha_list, unlinked_previous_ha_list)
+        state["local_complete_ha_counts"] = self._collect_local_completions(
+            state["unlinked_ha_list"], state["unlinked_previous_ha_list"]
+        )
 
-        for item in unlinked_ha_list:
-            if item['name'] in updated_new_names:
+        for item in state["unlinked_ha_list"]:
+            if item["name"] in state["updated_new_names"]:
                 continue
-
-            if item['complete'] != True:
-                open_ha_counts[item['name']] += 1
+            if item["complete"] != True:
+                open_ha_counts[item["name"]] += 1
 
         for item_name, count in open_ha_counts.items():
             missing_count = max(count - alexa_counts[item_name], 0)
@@ -1410,7 +1468,7 @@ class AlexaShoppingListSync:
         for item_name, alexa_count in alexa_counts.items():
             excess_remote_count = max(alexa_count - open_ha_counts[item_name], 0)
             local_completion_budget = max(
-                local_complete_ha_counts[item_name] - linked_complete_counts[item_name],
+                state["local_complete_ha_counts"][item_name] - state["linked_complete_counts"][item_name],
                 0,
             )
             completable_count = min(local_completion_budget, excess_remote_count)
@@ -1418,10 +1476,10 @@ class AlexaShoppingListSync:
 
         previous_unlinked_open_ha_counts = Counter()
         current_unlinked_completed_ha_counts = Counter()
-        for item in unlinked_previous_ha_list:
+        for item in state["unlinked_previous_ha_list"]:
             if bool(item.get("complete", False)) is False:
                 previous_unlinked_open_ha_counts[item["name"]] += 1
-        for item in unlinked_ha_list:
+        for item in state["unlinked_ha_list"]:
             if bool(item.get("complete", False)):
                 current_unlinked_completed_ha_counts[item["name"]] += 1
 
@@ -1433,7 +1491,7 @@ class AlexaShoppingListSync:
             if current_unlinked_completed_ha_counts[item_name] <= 0:
                 continue
 
-            persistent_remote_count = min(previous_alexa_counts[item_name], alexa_count)
+            persistent_remote_count = min(state["previous_alexa_counts"][item_name], alexa_count)
             already_scheduled = sum(
                 1
                 for scheduled in to_complete
@@ -1456,30 +1514,40 @@ class AlexaShoppingListSync:
                 filtered_to_complete.append(item_name)
             to_complete = filtered_to_complete
 
-        for item_name in protected_alexa_items:
+        for item_name in state["protected_alexa_items"]:
             to_complete.append(item_name)
             if item_name in to_add:
                 to_add.remove(item_name)
 
-        filtered_ha_list = await loop.run_in_executor(None, self._strip_names_from_ha_list, ha_list, protected_alexa_items)
+        state["filtered_ha_list"] = await loop.run_in_executor(
+            None,
+            self._strip_names_from_ha_list,
+            state["ha_list"],
+            state["protected_alexa_items"],
+        )
+        state["to_add"] = to_add
+        state["to_complete"] = to_complete
 
-        await self._debug_log_entry(logger, "To add to alexa: "+json.dumps(to_add))
-        await self._debug_log_entry(logger, "To complete on alexa: "+json.dumps(to_complete))
+        await self._debug_log_entry(logger, "To add to alexa: " + json.dumps(to_add))
+        await self._debug_log_entry(logger, "To complete on alexa: " + json.dumps(to_complete))
+        return state
+
+    async def _sync_phase_apply_alexa_changes(self, loop, state, logger=None):
         added_alexa_items = []
-        if len(to_add) + len(to_complete) + len(update_items) > 1:
+        if len(state["to_add"]) + len(state["to_complete"]) + len(state["update_items"]) > 1:
             await self._debug_log_entry(logger, "Applying Alexa changes in bulk")
             bulk_result = await self._bulk_apply_changes(
-                add_items=to_add,
-                update_items=update_items,
-                complete_items=to_complete,
+                add_items=state["to_add"],
+                update_items=state["update_items"],
+                complete_items=state["to_complete"],
                 include_details=True,
             )
             if isinstance(bulk_result, dict):
                 added_alexa_items = bulk_result.get("added_items", [])
         else:
-            for update in update_items:
-                await self._update_item(update['old'], update['new'], alexa_id=update.get('alexa_id'))
-            for item in to_add:
+            for update in state["update_items"]:
+                await self._update_item(update["old"], update["new"], alexa_id=update.get("alexa_id"))
+            for item in state["to_add"]:
                 add_response = await self._send_command("add_item", item=item, include_details=True)
                 if self._command_successful(add_response):
                     add_result = self._command_result(add_response)
@@ -1488,142 +1556,201 @@ class AlexaShoppingListSync:
                         added_alexa_items.extend(add_result.get("added_items", []))
                     else:
                         self._update_cached_list(add_result)
-            for item in to_complete:
+            for item in state["to_complete"]:
                 if isinstance(item, dict):
-                    await self._complete_item(item.get('name') or "", alexa_id=item.get('alexa_id'))
+                    await self._complete_item(item.get("name") or "", alexa_id=item.get("alexa_id"))
                 else:
                     await self._complete_item(item)
 
-        item_links = await loop.run_in_executor(
+        state["added_alexa_items"] = added_alexa_items
+        state["item_links"] = await loop.run_in_executor(
             None,
             self._link_added_alexa_items,
-            item_links,
-            ha_list,
+            state["item_links"],
+            state["ha_list"],
             added_alexa_items,
         )
         if added_alexa_items:
-            if item_links != previous_item_links:
+            if state["item_links"] != state["previous_item_links"]:
                 await self._debug_log_entry(
                     logger,
-                    "Item links after add-response linking: " + json.dumps(
-                        self._compact_links_for_log(item_links, ha_list, alexa_snapshot, added_alexa_items)
+                    "Item links after add-response linking: "
+                    + json.dumps(
+                        self._compact_links_for_log(
+                            state["item_links"],
+                            state["ha_list"],
+                            state["alexa_snapshot"],
+                            added_alexa_items,
+                        )
                     ),
                 )
             else:
                 await self._debug_log_entry(
                     logger,
-                    "Add-response linking left links unchanged for added Alexa items: " + json.dumps(
-                        self._compact_alexa_snapshot_for_log(added_alexa_items)
-                    ),
+                    "Add-response linking left links unchanged for added Alexa items: "
+                    + json.dumps(self._compact_alexa_snapshot_for_log(added_alexa_items)),
                 )
-        previous_item_links = dict(item_links)
-        
-        refreshed_snapshot = self._normalize_alexa_items(await self._get_list())
-        refreshed_items = self._active_alexa_item_names(refreshed_snapshot)
-        await self._debug_log_entry(logger, "Refreshed Alexa list: "+json.dumps(refreshed_items))
-        unlinked_refreshed_items = await loop.run_in_executor(
-            None, self._filter_unlinked_alexa_active_names, refreshed_snapshot, item_links, ha_list
+
+        state["previous_item_links"] = dict(state["item_links"])
+        return state
+
+    async def _sync_phase_refresh_and_apply_ha(self, loop, state, logger=None):
+        state["refreshed_snapshot"] = self._normalize_alexa_items(await self._get_list())
+        state["refreshed_items"] = self._active_alexa_item_names(state["refreshed_snapshot"])
+        await self._debug_log_entry(logger, "Refreshed Alexa list: " + json.dumps(state["refreshed_items"]))
+
+        state["unlinked_refreshed_items"] = await loop.run_in_executor(
+            None,
+            self._filter_unlinked_alexa_active_names,
+            state["refreshed_snapshot"],
+            state["item_links"],
+            state["ha_list"],
         )
         ignored_refreshed_removed_counts = Counter(
             item.get("name") if isinstance(item, dict) else item
-            for item in to_complete
+            for item in state["to_complete"]
         )
         if await loop.run_in_executor(
             None,
             self._mark_items_completed_from_count_delta,
-            unlinked_ha_list,
-            unlinked_alexa_list,
-            unlinked_refreshed_items,
+            state["unlinked_ha_list"],
+            state["unlinked_alexa_list"],
+            state["unlinked_refreshed_items"],
             ignored_refreshed_removed_counts,
         ):
-            await self._debug_log_entry(
-                logger,
-                "Marked HA items as completed from refreshed Alexa delta"
-            )
+            await self._debug_log_entry(logger, "Marked HA items as completed from refreshed Alexa delta")
+
         await self._debug_log_entry(logger, "Exporting new HA shopping list")
-        await loop.run_in_executor(None, self._update_completed_ledger, lambda ledger: [
-            self._mark_ledger_item_seen_on_alexa(ledger, item_name, refreshed_items)
-            for item_name in refreshed_items
-        ])
-        completed_ledger = await loop.run_in_executor(None, self._get_completed_ledger)
-        # Keep ledger writes/logging for now, but do not let it alter sync results.
-        protected_refreshed_items = []
-        desired_ha_list = await loop.run_in_executor(
-            None, self._strip_names_from_ha_list, filtered_ha_list, protected_refreshed_items
+        await loop.run_in_executor(
+            None,
+            self._update_completed_ledger,
+            lambda ledger: [
+                self._mark_ledger_item_seen_on_alexa(ledger, item_name, state["refreshed_items"])
+                for item_name in state["refreshed_items"]
+            ],
         )
-        await self._debug_log_entry(logger, "Desired HA list before merge: "+json.dumps(desired_ha_list))
-        linked_ha_items = [item for item in desired_ha_list if item.get("id") in item_links]
+        state["completed_ledger"] = await loop.run_in_executor(None, self._get_completed_ledger)
+        state["protected_refreshed_items"] = []
+        state["desired_ha_list"] = await loop.run_in_executor(
+            None,
+            self._strip_names_from_ha_list,
+            state["filtered_ha_list"],
+            state["protected_refreshed_items"],
+        )
+        await self._debug_log_entry(
+            logger, "Desired HA list before merge: " + json.dumps(state["desired_ha_list"])
+        )
+
+        linked_ha_items = [
+            item for item in state["desired_ha_list"] if item.get("id") in state["item_links"]
+        ]
         unlinked_desired_ha_list = await loop.run_in_executor(
-            None, self._filter_unlinked_ha_items, desired_ha_list, item_links, refreshed_snapshot
+            None,
+            self._filter_unlinked_ha_items,
+            state["desired_ha_list"],
+            state["item_links"],
+            state["refreshed_snapshot"],
         )
         visible_refreshed_items = await loop.run_in_executor(
-            None, self._filter_alexa_items, unlinked_refreshed_items, protected_refreshed_items
+            None,
+            self._filter_alexa_items,
+            state["unlinked_refreshed_items"],
+            state["protected_refreshed_items"],
         )
         merged_unlinked_ha_list = await loop.run_in_executor(
             None,
             self._merge_ha_with_alexa,
             unlinked_desired_ha_list,
             visible_refreshed_items,
-            local_complete_ha_counts,
+            state["local_complete_ha_counts"],
         )
-        merged_ha_list = await loop.run_in_executor(
+        state["merged_ha_list"] = await loop.run_in_executor(
             None,
             self._dedupe_ha_items_by_id,
             linked_ha_items + merged_unlinked_ha_list,
         )
-        await self._debug_log_entry(logger, "Merged HA list before apply: "+json.dumps(merged_ha_list))
-        applied_ha_list = await self._apply_ha_shopping_list(merged_ha_list)
-        item_links = await loop.run_in_executor(
+        await self._debug_log_entry(
+            logger, "Merged HA list before apply: " + json.dumps(state["merged_ha_list"])
+        )
+
+        state["applied_ha_list"] = await self._apply_ha_shopping_list(state["merged_ha_list"])
+        state["item_links"] = await loop.run_in_executor(
             None,
             self._remap_links_to_applied_ha_ids,
-            item_links,
-            merged_ha_list,
-            applied_ha_list,
+            state["item_links"],
+            state["merged_ha_list"],
+            state["applied_ha_list"],
         )
-        item_links = await loop.run_in_executor(
+        state["item_links"] = await loop.run_in_executor(
             None,
             self._prune_item_links,
-            item_links,
-            applied_ha_list,
-            refreshed_snapshot,
+            state["item_links"],
+            state["applied_ha_list"],
+            state["refreshed_snapshot"],
         )
-        if item_links != previous_item_links:
+        if state["item_links"] != state["previous_item_links"]:
             await self._debug_log_entry(
                 logger,
-                "Item links after final prune: " + json.dumps(
-                    self._compact_links_for_log(item_links, applied_ha_list, refreshed_snapshot)
+                "Item links after final prune: "
+                + json.dumps(
+                    self._compact_links_for_log(
+                        state["item_links"], state["applied_ha_list"], state["refreshed_snapshot"]
+                    )
                 ),
             )
-        previous_item_links = dict(item_links)
-        item_links = await loop.run_in_executor(
+
+        state["previous_item_links"] = dict(state["item_links"])
+        state["item_links"] = await loop.run_in_executor(
             None,
             self._bootstrap_item_links,
-            item_links,
-            applied_ha_list,
-            refreshed_snapshot,
+            state["item_links"],
+            state["applied_ha_list"],
+            state["refreshed_snapshot"],
         )
-        if item_links != previous_item_links:
+        if state["item_links"] != state["previous_item_links"]:
             await self._debug_log_entry(
                 logger,
-                "Item links after final bootstrap: " + json.dumps(
-                    self._compact_links_for_log(item_links, applied_ha_list, refreshed_snapshot)
+                "Item links after final bootstrap: "
+                + json.dumps(
+                    self._compact_links_for_log(
+                        state["item_links"], state["applied_ha_list"], state["refreshed_snapshot"]
+                    )
                 ),
             )
-        await loop.run_in_executor(None, self._set_sync_snapshot, refreshed_snapshot, applied_ha_list)
-        await loop.run_in_executor(None, self._set_item_links, item_links)
+
+        return state
+
+    async def _sync_phase_finalize(self, loop, state, logger=None):
+        await loop.run_in_executor(
+            None,
+            self._set_sync_snapshot,
+            state["refreshed_snapshot"],
+            state["applied_ha_list"],
+        )
+        await loop.run_in_executor(None, self._set_item_links, state["item_links"])
         if self._hasl_refresh is not None:
             await self._hasl_refresh()
 
-
-        await self._debug_log_entry(logger, "Original list hash: "+original_ha_list_hash)
-        new_ha_list_hash = self._ha_items_hash(applied_ha_list)
-        await self._debug_log_entry(logger, "New list hash: "+new_ha_list_hash)
-        if original_ha_list_hash != new_ha_list_hash:
+        await self._debug_log_entry(logger, "Original list hash: " + state["original_ha_list_hash"])
+        new_ha_list_hash = self._ha_items_hash(state["applied_ha_list"])
+        await self._debug_log_entry(logger, "New list hash: " + new_ha_list_hash)
+        if state["original_ha_list_hash"] != new_ha_list_hash:
             await self._debug_log_entry(logger, "List changed")
             return True
-        else:
-            await self._debug_log_entry(logger, "List did not change")
-            return False
+
+        await self._debug_log_entry(logger, "List did not change")
+        return False
+
+
+    async def _do_sync(self, loop, logger=None, force=False):
+        state = await self._sync_phase_load_state(loop, logger, force)
+        state = await self._sync_phase_prepare_links(loop, state, logger)
+        state = await self._sync_phase_apply_remote_changes(loop, state, logger)
+        state = await self._sync_phase_collect_unlinked_views(loop, state)
+        state = await self._sync_phase_plan_alexa_changes(loop, state, logger)
+        state = await self._sync_phase_apply_alexa_changes(loop, state, logger)
+        state = await self._sync_phase_refresh_and_apply_ha(loop, state, logger)
+        return await self._sync_phase_finalize(loop, state, logger)
 
     
     async def sync(self, logger=None, force=False):

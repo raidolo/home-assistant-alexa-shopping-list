@@ -1,0 +1,10 @@
+# Normalize text files in the repository.
+* text=auto
+
+# Keep source and config files on LF across platforms.
+*.md text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.txt text eol=lf

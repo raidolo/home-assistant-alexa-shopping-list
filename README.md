@@ -10,9 +10,7 @@ There are three parts:
 
 **The Server**
 
-This is a small Selenium-based python application, which accesses your alexa shopping list via the Amazon Website. It can read what is on the list, add things to it and remove things from it.
-
-Selenium allows you to essentially remote control a web browser and can browse websites, read content, click buttons, etc.
+This is a small Python application that talks to the Amazon Alexa shopping list HTTP endpoints using your authenticated Amazon session cookies. It can read what is on the list, add things to it, update items, complete items, and remove things from it.
 
 The server runs on your home assistant device, or a different server on your network.
 

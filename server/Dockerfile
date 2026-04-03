@@ -8,17 +8,8 @@ COPY server.py /server/server.py
 COPY requirements.txt /server/requirements.txt
 
 ENV ASL_CONFIG_PATH="/config/"
-ENV CHROME_DRIVER="/usr/bin/chromedriver"
 
-RUN apk update
-
-RUN apk add chromium
-RUN apk add chromium-chromedriver
-RUN apk add python3
-RUN apk add py3-pip
-RUN apk add tini
-
-RUN rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache python3 py3-pip tini
 
 RUN pip3 install --break-system-packages -r /server/requirements.txt
 RUN rm /server/requirements.txt

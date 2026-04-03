@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 
 clients = set()
 
-alexa_running = False
 alexa = None
+config = {}
+server = None
 
 # ============================================================
 # Helpers
@@ -65,15 +66,15 @@ def _save_config():
 
 
 def _get_config_value(key, default=None):
-    if key in config.keys():
+    if key in config:
         return config[key]
     return default
 
 
 def _set_config_value(key, new_value=None):
-    logger.info("Set config value `"+key+"` = "+str(new_value))
+    logger.info(f"Set config value `{key}` = {new_value}")
     global config
-    if new_value != None:
+    if new_value is not None:
         config[key] = new_value
     elif key in config:
         del config[key]
@@ -88,6 +89,9 @@ async def _cmd_config_valid():
 
 async def _cmd_config_set(args):
     _set_config_value(args['key'], args['value'])
+    if args['key'] == "amazon_url":
+        global alexa
+        alexa = None
     return True, None
 
 
@@ -98,29 +102,14 @@ async def _cmd_config_get(args):
 # Alexa
 
 
-def _start_alexa():
+def _get_alexa():
     global alexa
-    global alexa_running
-
-    if alexa_running == False:
+    if alexa is None:
         alexa = AlexaShoppingList(
             _get_config_value("amazon_url", "amazon.co.uk"),
             _config_path()
         )
-        alexa_running = True
-    
     return alexa
-
-
-def _stop_alexa():
-    global alexa
-    global alexa_running
-
-    if alexa_running == True:
-        del alexa
-    
-    alexa = None
-    alexa_running = False
 
 # ============================================================
 # API
@@ -134,6 +123,8 @@ async def _cmd_reset():
             os.remove(file_path)
     
     _load_config()
+    global alexa
+    alexa = None
     return True, None
 
 
@@ -148,11 +139,11 @@ async def _cmd_is_authenticated(arguments=None):
         if time_diff < 86400:
             return True, None
 
-    instance = _start_alexa()
+    instance = _get_alexa()
 
     requires_login = await asyncio.to_thread(instance.requires_login)
 
-    if requires_login == True:
+    if requires_login:
         logger.info("Authenticated: No")
         _set_config_value("auth_checked_time", 0)
         result = False, None
@@ -160,8 +151,6 @@ async def _cmd_is_authenticated(arguments=None):
         logger.info("Authenticated: Yes")
         _set_config_value("auth_checked_time", _time_now())
         result = True, None
-    
-    _stop_alexa()
     return result
 
 
@@ -171,12 +160,14 @@ async def _cmd_login(args):
     with open(os.path.join(_config_path(), 'cookies.json'), 'w') as file:
         json.dump(args['session'], file)
 
+    global alexa
+    alexa = None
     return await _cmd_is_authenticated()
 
 
 async def _cmd_get_shopping_list():
     try:
-        instance = _start_alexa()
+        instance = _get_alexa()
         requires_login = await asyncio.to_thread(instance.requires_login)
         if requires_login:
             result = None, "Not authenticated"
@@ -189,14 +180,12 @@ async def _cmd_get_shopping_list():
     except Exception as e:
         logger.error(f"Error getting shopping list: {e}", exc_info=True)
         result = None, f"Server error: {e}"
-    finally:
-        _stop_alexa()
     return result
 
 
 async def _cmd_get_add_shopping_list_item(args):
     try:
-        instance = _start_alexa()
+        instance = _get_alexa()
         requires_login = await asyncio.to_thread(instance.requires_login)
         if requires_login:
             result = None, "Not authenticated"
@@ -213,14 +202,12 @@ async def _cmd_get_add_shopping_list_item(args):
     except Exception as e:
         logger.error(f"Error adding item: {e}", exc_info=True)
         result = None, f"Server error: {e}"
-    finally:
-        _stop_alexa()
     return result
 
 
 async def _cmd_get_update_shopping_list_item(args):
     try:
-        instance = _start_alexa()
+        instance = _get_alexa()
         requires_login = await asyncio.to_thread(instance.requires_login)
         if requires_login:
             result = None, "Not authenticated"
@@ -238,14 +225,12 @@ async def _cmd_get_update_shopping_list_item(args):
     except Exception as e:
         logger.error(f"Error updating item: {e}", exc_info=True)
         result = None, f"Server error: {e}"
-    finally:
-        _stop_alexa()
     return result
 
 
 async def _cmd_get_remove_shopping_list_item(args):
     try:
-        instance = _start_alexa()
+        instance = _get_alexa()
         requires_login = await asyncio.to_thread(instance.requires_login)
         if requires_login:
             result = None, "Not authenticated"
@@ -258,14 +243,12 @@ async def _cmd_get_remove_shopping_list_item(args):
     except Exception as e:
         logger.error(f"Error removing item: {e}", exc_info=True)
         result = None, f"Server error: {e}"
-    finally:
-        _stop_alexa()
     return result
 
 
 async def _cmd_get_complete_shopping_list_item(args):
     try:
-        instance = _start_alexa()
+        instance = _get_alexa()
         requires_login = await asyncio.to_thread(instance.requires_login)
         if requires_login:
             result = None, "Not authenticated"
@@ -282,14 +265,12 @@ async def _cmd_get_complete_shopping_list_item(args):
     except Exception as e:
         logger.error(f"Error completing item: {e}", exc_info=True)
         result = None, f"Server error: {e}"
-    finally:
-        _stop_alexa()
     return result
 
 
 async def _cmd_bulk_apply_shopping_list_changes(args):
     try:
-        instance = _start_alexa()
+        instance = _get_alexa()
         requires_login = await asyncio.to_thread(instance.requires_login)
         if requires_login:
             result = None, "Not authenticated"
@@ -309,15 +290,14 @@ async def _cmd_bulk_apply_shopping_list_changes(args):
     except Exception as e:
         logger.error(f"Error applying bulk list changes: {e}", exc_info=True)
         result = None, f"Server error: {e}"
-    finally:
-        _stop_alexa()
     return result
 
 # ============================================================
 # Main handler
 
 
-async def _route_command(command, arguments={}):
+async def _route_command(command, arguments=None):
+    arguments = arguments or {}
 
     # Config
     if command == "config_valid":
@@ -409,12 +389,17 @@ async def main():
     _load_config()
 
     global server
+    global alexa
     listen_addr = None
     listen_port = int(_get_config_value('listen_port', 4000))
+    alexa = AlexaShoppingList(
+        _get_config_value("amazon_url", "amazon.co.uk"),
+        _config_path()
+    )
     server = await websockets.serve(_process_command, listen_addr, listen_port)
 
     logger.info("======================================================================")
-    logger.info("Alexa Shopping List server started on port "+str(listen_port))
+    logger.info(f"Alexa Shopping List server started on port {listen_port}")
 
     signal.signal(signal.SIGINT, _signal_handler)
     await server.wait_closed()

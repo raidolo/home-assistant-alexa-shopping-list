@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2604.003.01] - 2026-04-03
+
+### Improvements
+- **Server is now HTTP-only after login** - Removed Selenium and Chromium from the server runtime so Alexa list reads and mutations now rely entirely on Amazon's HTTP shopping list endpoints once session cookies are available.
+- **Lighter server lifecycle** - The WebSocket server now keeps a shared `AlexaShoppingList` instance instead of creating and tearing it down for every command, which better matches the new lightweight HTTP-only backend.
+- **Slimmer container image** - The server Docker image no longer installs Chromium or chromedriver and now only ships the Python runtime pieces needed for the HTTP-based server.
+- **Docs aligned with reality** - Updated the project README so the server description reflects the HTTP cookie-based architecture rather than the old Selenium-based one.
+
+### Notes
+- **Desktop login flow is unchanged** - The desktop authenticator still uses a real browser to obtain Amazon session cookies; this change only removes Selenium from the long-running server component.
+- **GitHub Actions should validate the runtime path** - This change was syntax-checked locally, while Docker build/runtime validation is intentionally deferred to CI for this branch.
+
 ## [2604.003.00] - 2026-04-03
 
 ### Features

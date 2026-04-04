@@ -47,6 +47,8 @@ class AlexaShoppingListSyncSensor(SensorEntity):
         self.async_on_remove(
             async_track_time_interval(self.hass, self._handle_scheduled_update, interval)
         )
+        await self._run_sync_update()
+        self.async_write_ha_state()
 
     async def _handle_scheduled_update(self, now) -> None:
         del now
@@ -85,4 +87,5 @@ class AlexaShoppingListSyncSensor(SensorEntity):
 
     async def async_update(self) -> None:
         await self._run_sync_update()
+        self.async_write_ha_state()
 

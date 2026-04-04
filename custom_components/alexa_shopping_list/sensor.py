@@ -10,6 +10,8 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.components import persistent_notification
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
 
 from . import DOMAIN, CONF_SKIP_INITIAL_SYNC, CONF_SYNC_MINS
 
@@ -26,7 +28,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     async_add_entities([update_sensor], update_before_add=True)
 
 
-class AlexaShoppingListSyncSensor(SensorEntity):
+class AlexaShoppingListSyncSensor(RestoreEntity, SensorEntity):
     """Synchronise HA and Alexa shopping lists"""
 
     def __init__(self, hass, alexa, config_entry):
@@ -43,6 +45,11 @@ class AlexaShoppingListSyncSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and self._attr_native_value is None:
+            restored = dt_util.parse_datetime(last_state.state)
+            if restored is not None:
+                self._attr_native_value = restored
         interval = timedelta(minutes=max(1, int(self.config_entry.data.get(CONF_SYNC_MINS, 60))))
         self.async_on_remove(
             async_track_time_interval(self.hass, self._handle_scheduled_update, interval)

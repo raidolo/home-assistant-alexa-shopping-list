@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from datetime import timedelta
 import logging
 import json
 
@@ -8,8 +9,9 @@ from homeassistant.components.sensor import (
     SensorEntity
 )
 from homeassistant.components import persistent_notification
+from homeassistant.helpers.event import async_track_time_interval
 
-from . import DOMAIN, CONF_SKIP_INITIAL_SYNC
+from . import DOMAIN, CONF_SKIP_INITIAL_SYNC, CONF_SYNC_MINS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,9 +39,21 @@ class AlexaShoppingListSyncSensor(SensorEntity):
         self._attr_icon = "mdi:sync"
         self._attr_unique_id = "alexa_shopping_list_sync"
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
-    
+        self._attr_should_poll = False
 
-    async def async_update(self) -> None:
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        interval = timedelta(minutes=max(1, int(self.config_entry.data.get(CONF_SYNC_MINS, 60))))
+        self.async_on_remove(
+            async_track_time_interval(self.hass, self._handle_scheduled_update, interval)
+        )
+
+    async def _handle_scheduled_update(self, now) -> None:
+        del now
+        await self._run_sync_update()
+        self.async_write_ha_state()
+
+    async def _run_sync_update(self) -> None:
         try:
             if self._skip_initial_sync_pending:
                 self._skip_initial_sync_pending = False
@@ -67,4 +81,8 @@ class AlexaShoppingListSyncSensor(SensorEntity):
                     title="Alexa Shopping List Auth Expired",
                     notification_id="alexa_shopping_list_auth"
                 )
+    
+
+    async def async_update(self) -> None:
+        await self._run_sync_update()
 

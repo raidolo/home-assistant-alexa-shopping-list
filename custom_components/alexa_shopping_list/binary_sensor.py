@@ -27,6 +27,7 @@ class AlexaShoppingListAuthSensor(BinarySensorEntity):
         self._attr_name = "Alexa Shopping List Authenticated"
         self._attr_unique_id = "alexa_shopping_list_authenticated"
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+        self._attr_should_poll = False
 
     @property
     def is_on(self):

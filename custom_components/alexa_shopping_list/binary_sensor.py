@@ -33,6 +33,22 @@ class AlexaShoppingListAuthSensor(BinarySensorEntity):
         """Return true if the server is authenticated."""
         return self.alexa.is_authenticated
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+
+        def _handle_auth_state_change(is_authenticated):
+            del is_authenticated
+            self.async_write_ha_state()
+
+        self._auth_state_listener = _handle_auth_state_change
+        self.alexa.add_auth_state_listener(self._auth_state_listener)
+
+    async def async_will_remove_from_hass(self) -> None:
+        listener = getattr(self, "_auth_state_listener", None)
+        if listener is not None:
+            self.alexa.remove_auth_state_listener(listener)
+        await super().async_will_remove_from_hass()
+
     async def async_update(self) -> None:
         """Fetch new state data for the sensor."""
         await self.alexa.get_server_auth_cached_state()

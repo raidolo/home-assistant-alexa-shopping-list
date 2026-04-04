@@ -26,9 +26,29 @@ class AlexaShoppingListSync:
         self._setup_cached_list(sync_mins * 60)
         self._sync_lock = asyncio.Lock()
         self.is_authenticated = True
+        self._auth_state_listeners = set()
 
     # ============================================================
     # Helpers
+
+    def add_auth_state_listener(self, callback):
+        self._auth_state_listeners.add(callback)
+
+    def remove_auth_state_listener(self, callback):
+        self._auth_state_listeners.discard(callback)
+
+    def _set_authenticated_state(self, is_authenticated):
+        is_authenticated = bool(is_authenticated)
+        if self.is_authenticated == is_authenticated:
+            return
+
+        self.is_authenticated = is_authenticated
+
+        for callback in list(self._auth_state_listeners):
+            try:
+                callback(is_authenticated)
+            except Exception:
+                continue
 
 
     async def _send_command(self, command, **kwargs):
@@ -47,9 +67,9 @@ class AlexaShoppingListSync:
     def _command_successful(self, response):
         if "error" in response and response['error'] != None:
             if response['error'] == "Not authenticated":
-                self.is_authenticated = False
+                self._set_authenticated_state(False)
             return False
-        self.is_authenticated = True
+        self._set_authenticated_state(True)
         return True
     
 
@@ -88,7 +108,7 @@ class AlexaShoppingListSync:
         response = await self._send_command("authenticated")
         if self._command_successful(response):
             result = self._command_result(response)
-            self.is_authenticated = bool(result)
+            self._set_authenticated_state(bool(result))
             return self.is_authenticated
         return False
     
@@ -97,7 +117,7 @@ class AlexaShoppingListSync:
             response = await self._send_command("config_get", key="auth_checked_time")
             if self._command_successful(response):
                 result = self._command_result(response)
-                self.is_authenticated = bool(result and int(result) > 0)
+                self._set_authenticated_state(bool(result and int(result) > 0))
                 return self.is_authenticated
             return False
         except Exception:

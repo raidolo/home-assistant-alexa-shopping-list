@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import gzip
 import http.client
 import json
 import logging
@@ -7,11 +8,14 @@ import os
 import time
 import urllib.error
 import urllib.request
+import zlib
 
 logger = logging.getLogger(__name__)
 
 HTTP_TIMEOUT = 30
 HTTP_RETRY_DELAYS = (1, 2, 4)
+HTTP_ACCEPT_LANGUAGE = "en-US,en;q=0.9,it;q=0.8"
+HTTP_ACCEPT_ENCODING = "gzip, deflate"
 HTTP_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
@@ -91,8 +95,13 @@ class AlexaShoppingList:
     def _http_request_json(self, url: str, method: str = "GET", payload=None):
         headers = {
             "accept": "application/json",
+            "accept-encoding": HTTP_ACCEPT_ENCODING,
+            "accept-language": HTTP_ACCEPT_LANGUAGE,
+            "cache-control": "max-age=0",
+            "connection": "keep-alive",
             "content-type": "application/json",
             "cookie": self._http_cookie_header(),
+            "pragma": "no-cache",
             "referer": f"https://www.{self.amazon_url}/alexaquantum/sp/alexaShoppingList?ref=nav_asl",
             "user-agent": HTTP_USER_AGENT,
         }
@@ -112,7 +121,10 @@ class AlexaShoppingList:
         for attempt, retry_delay in enumerate((0,) + HTTP_RETRY_DELAYS, start=1):
             try:
                 with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
-                    body = response.read().decode("utf-8")
+                    body = self._decode_http_body(
+                        response.read(),
+                        response.headers.get("Content-Encoding", ""),
+                    )
                     parsed = None
                     if body:
                         try:
@@ -126,7 +138,10 @@ class AlexaShoppingList:
                         "json": parsed,
                     }
             except urllib.error.HTTPError as error:
-                body = error.read().decode("utf-8", errors="replace")
+                body = self._decode_http_body(
+                    error.read(),
+                    error.headers.get("Content-Encoding", "") if error.headers else "",
+                )
                 parsed = None
                 if body:
                     try:
@@ -172,6 +187,22 @@ class AlexaShoppingList:
                 raise RuntimeError(f"Amazon HTTP request failed after retries: {error}") from error
 
         raise RuntimeError(f"Amazon HTTP request failed after retries: {last_error}")
+
+    def _decode_http_body(self, raw_body, content_encoding=""):
+        if not raw_body:
+            return ""
+
+        normalized_encoding = (content_encoding or "").strip().lower()
+
+        try:
+            if normalized_encoding == "gzip":
+                raw_body = gzip.decompress(raw_body)
+            elif normalized_encoding == "deflate":
+                raw_body = zlib.decompress(raw_body)
+        except Exception:
+            pass
+
+        return raw_body.decode("utf-8", errors="replace")
 
     def _ensure_authenticated_response(self, response, action: str):
         status = response.get("status")

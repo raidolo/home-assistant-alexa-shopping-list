@@ -347,6 +347,17 @@ class BrowserBackend:
             )
         return compact
 
+    def _items_log_summary(self, items, preview_limit: int = 12):
+        compact_items = self._compact_items_for_log(items)
+        active_items = [item for item in compact_items if not item.get("complete")]
+        completed_items = [item for item in compact_items if item.get("complete")]
+        return {
+            "active_count": len(active_items),
+            "completed_count": len(completed_items),
+            "active_preview": active_items[:preview_limit],
+            "completed_preview": completed_items[:preview_limit],
+        }
+
     def _get_list_items_payload(self):
         response = self._browser_request_json("/alexashoppinglists/api/getlistitems")
         self._ensure_authenticated_response(response, "getlistitems")
@@ -527,7 +538,7 @@ class BrowserBackend:
         logger.info(
             "Alexa browser complete result for '%s': %s",
             item,
-            json.dumps(self._compact_items_for_log(refreshed), ensure_ascii=False),
+            json.dumps(self._items_log_summary(refreshed), ensure_ascii=False),
         )
         return refreshed
 
@@ -538,7 +549,7 @@ class BrowserBackend:
         logger.info(
             "Alexa browser add result for '%s': %s",
             item,
-            json.dumps(self._compact_items_for_log(refreshed), ensure_ascii=False),
+            json.dumps(self._items_log_summary(refreshed), ensure_ascii=False),
         )
         if include_details:
             return {
@@ -554,7 +565,7 @@ class BrowserBackend:
             "Alexa browser update result for '%s' -> '%s': %s",
             old,
             new,
-            json.dumps(self._compact_items_for_log(refreshed), ensure_ascii=False),
+            json.dumps(self._items_log_summary(refreshed), ensure_ascii=False),
         )
         return refreshed
 
@@ -564,7 +575,7 @@ class BrowserBackend:
         logger.info(
             "Alexa browser delete result for '%s': %s",
             item,
-            json.dumps(self._compact_items_for_log(refreshed), ensure_ascii=False),
+            json.dumps(self._items_log_summary(refreshed), ensure_ascii=False),
         )
         return refreshed
 
@@ -627,7 +638,7 @@ class BrowserBackend:
         refreshed = self.get_alexa_list()
         logger.info(
             "Alexa browser bulk apply result: %s",
-            json.dumps(self._compact_items_for_log(refreshed), ensure_ascii=False),
+            json.dumps(self._items_log_summary(refreshed), ensure_ascii=False),
         )
         if include_details:
             return {

@@ -27,6 +27,7 @@ class AlexaShoppingListSync:
         self._sync_lock = asyncio.Lock()
         self.is_authenticated = True
         self._auth_state_listeners = set()
+        self._last_updated_listeners = set()
 
     # ============================================================
     # Helpers
@@ -47,6 +48,19 @@ class AlexaShoppingListSync:
         for callback in list(self._auth_state_listeners):
             try:
                 callback(is_authenticated)
+            except Exception:
+                continue
+
+    def add_last_updated_listener(self, callback):
+        self._last_updated_listeners.add(callback)
+
+    def remove_last_updated_listener(self, callback):
+        self._last_updated_listeners.discard(callback)
+
+    def _notify_last_updated_listeners(self):
+        for callback in list(self._last_updated_listeners):
+            try:
+                callback(self.last_updated)
             except Exception:
                 continue
 
@@ -138,6 +152,7 @@ class AlexaShoppingListSync:
             return
         self._cached_list = new_list
         self.last_updated = datetime.datetime.now().astimezone()
+        self._notify_last_updated_listeners()
     
 
     def _cached_list_needs_updating(self):

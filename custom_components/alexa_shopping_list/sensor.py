@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
 from homeassistant.components import persistent_notification
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.core import callback
 from homeassistant.util import dt as dt_util
 
 from . import DOMAIN, CONF_SKIP_INITIAL_SYNC, CONF_SYNC_MINS
@@ -43,6 +44,7 @@ class AlexaShoppingListSyncSensor(RestoreEntity, SensorEntity):
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
         self._attr_should_poll = False
         self._initial_refresh_task = None
+        self._last_updated_listener = None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -55,11 +57,23 @@ class AlexaShoppingListSyncSensor(RestoreEntity, SensorEntity):
         self.async_on_remove(
             async_track_time_interval(self.hass, self._handle_scheduled_update, interval)
         )
+        if self.alexa.last_updated is not None:
+            self._attr_native_value = self.alexa.last_updated
+
+        @callback
+        def _handle_last_updated_change(last_updated) -> None:
+            self._attr_native_value = last_updated
+            self.async_write_ha_state()
+
+        self._last_updated_listener = _handle_last_updated_change
+        self.alexa.add_last_updated_listener(self._last_updated_listener)
         self._initial_refresh_task = self.hass.async_create_task(self._run_initial_sync_update())
 
     async def async_will_remove_from_hass(self) -> None:
         if self._initial_refresh_task is not None and not self._initial_refresh_task.done():
             self._initial_refresh_task.cancel()
+        if self._last_updated_listener is not None:
+            self.alexa.remove_last_updated_listener(self._last_updated_listener)
         await super().async_will_remove_from_hass()
 
     async def _run_initial_sync_update(self) -> None:

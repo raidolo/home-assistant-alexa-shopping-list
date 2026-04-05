@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
-## [2604.003.04] - 2026-04-05
+## [2603.095.00] - 2026-04-05
 
 ### Features
 - **Modern browser backend with Playwright** - The server now moves away from the old Selenium-era architecture and starts modernizing around a dedicated Playwright browser backend that executes Alexa shopping list API calls from a real browser context.
@@ -18,13 +18,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **This is a strategic rollback from HTTP-only server access** - The pure Python API approach delivered excellent performance, but Amazon began returning anti-automation blocks and `503` responses after short periods of use, making that route unreliable for real-world operation.
 - **The goal is modernization, not a return to old DOM scraping** - The new direction keeps the server browser-based where needed, but aims to use Playwright plus browser-context API calls rather than rebuilding the previous Selenium DOM-driven flow.
 
-## [2604.003.03] - 2026-04-04
+## [2603.094.00] - 2026-04-04
 
 ### Improvements
 - **Encapsulated WebSocket server state** - Refactored the server internals around an explicit `ServerApp` so connection tracking, config state, backend lifecycle, and command routing are no longer spread across mutable module globals.
 - **Safer async shutdown flow** - The server shutdown path now schedules cleanup on the running event loop instead of calling `asyncio.run()` from the signal handler.
 
-## [2604.003.02] - 2026-04-03
+## [2603.093.02] - 2026-04-03
 
 ### Bug Fixes
 - **Retry truncated Alexa HTTP responses** - The server now retries transient Amazon HTTP failures such as `IncompleteRead`, timeouts, connection errors, and temporary `429`/`5xx` responses instead of failing the request immediately.
@@ -32,7 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Improvements
 - **More resilient cookie-based API reads** - Alexa list fetches are now less likely to surface one-off transport glitches to the CLI or Home Assistant when Amazon closes or interrupts a response mid-transfer.
 
-## [2604.003.01] - 2026-04-03
+## [2603.093.01] - 2026-04-03
 
 ### Improvements
 - **Server is now HTTP-only after login** - Removed Selenium and Chromium from the server runtime so Alexa list reads and mutations now rely entirely on Amazon's HTTP shopping list endpoints once session cookies are available.
@@ -44,7 +44,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Desktop login flow is unchanged** - The desktop authenticator still uses a real browser to obtain Amazon session cookies; this change only removes Selenium from the long-running server component.
 - **GitHub Actions should validate the runtime path** - This change was syntax-checked locally, while Docker build/runtime validation is intentionally deferred to CI for this branch.
 
-## [2604.003.00] - 2026-04-03
+## [2603.093.00] - 2026-04-03
 
 ### Features
 - **Home Assistant primitive refactor** - The custom component now moves away from direct `.shopping_list.json` reconstruction and uses Home Assistant-native `todo.*` APIs as the foundation for reading and applying shopping list changes.
@@ -77,7 +77,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **The sync is still in a transitional hybrid phase** - Linked items increasingly use id-based logic, while unlinked items still fall back to name/count reconciliation. This is intentional and keeps the refactor safe while migrating real-world lists forward.
 - **Client output is cleaner** - The CLI `list` output now shows a compact human-readable view with all active items and a preview of completed items, instead of dumping the full raw JSON payload.
 
-## [2604.001.00] - 2026-04-01
+## [2603.091.00] - 2026-04-01
 
 ### Bug Fixes
 - **Options flow compatibility** - Fixed the custom integration options flow so it no longer assigns `config_entry` manually, avoiding the Home Assistant deprecation warning and preserving compatibility with Home Assistant 2025.12 and later.

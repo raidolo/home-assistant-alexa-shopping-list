@@ -1,18 +1,22 @@
-FROM alpine:3.20
+FROM python:3.12-slim
 
-RUN mkdir /config
-RUN mkdir /server
+RUN mkdir -p /config /server
 
 COPY alexa.py /server/alexa.py
+COPY browser_backend.py /server/browser_backend.py
 COPY server.py /server/server.py
 COPY requirements.txt /server/requirements.txt
 
 ENV ASL_CONFIG_PATH="/config/"
+ENV PLAYWRIGHT_BROWSERS_PATH="/ms-playwright"
 
-RUN apk add --no-cache python3 py3-pip tini
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tini \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --break-system-packages -r /server/requirements.txt
+RUN pip install --no-cache-dir -r /server/requirements.txt
+RUN python -m playwright install --with-deps --only-shell chromium
 RUN rm /server/requirements.txt
 
 EXPOSE 4000 4000
-ENTRYPOINT ["/sbin/tini", "-s", "--", "python3","/server/server.py"]
+ENTRYPOINT ["/usr/bin/tini", "-s", "--", "python","/server/server.py"]

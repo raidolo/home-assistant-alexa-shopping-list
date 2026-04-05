@@ -101,7 +101,7 @@ class ServerApp:
         self._save_config()
 
         if key == "amazon_url":
-            self.alexa = None
+            self._discard_alexa()
 
     # ============================================================
     # Alexa
@@ -113,6 +113,14 @@ class ServerApp:
                 self._config_path(),
             )
         return self.alexa
+
+    def _discard_alexa(self):
+        if self.alexa is not None:
+            try:
+                self.alexa.close()
+            except Exception:
+                pass
+        self.alexa = None
 
     # ============================================================
     # API
@@ -137,7 +145,7 @@ class ServerApp:
                 os.remove(file_path)
 
         self._load_config()
-        self.alexa = None
+        self._discard_alexa()
         return True, None
 
     async def _cmd_is_authenticated(self, arguments=None):
@@ -169,7 +177,7 @@ class ServerApp:
         with open(self._cookies_file_path(), "w", encoding="utf-8") as file:
             json.dump(args["session"], file)
 
-        self.alexa = None
+        self._discard_alexa()
         return await self._cmd_is_authenticated()
 
     async def _run_with_authenticated_alexa(self, action_name, callback):
@@ -307,6 +315,8 @@ class ServerApp:
         if self.server is not None:
             self.server.close()
             await self.server.wait_closed()
+
+        self._discard_alexa()
 
     def _request_shutdown(self):
         logger.info("Shutting down server...")

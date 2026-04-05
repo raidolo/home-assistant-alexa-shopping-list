@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2604.003.04] - 2026-04-05
+
+### Features
+- **Modern browser backend with Playwright** - The server now moves away from the old Selenium-era architecture and starts modernizing around a dedicated Playwright browser backend that executes Alexa shopping list API calls from a real browser context.
+
+### Improvements
+- **Native Python API path retired** - The short-lived `urllib` / native Python HTTP request path to Amazon has been removed from the server after real-world testing showed that Amazon starts rejecting those direct API calls very quickly, even when valid session cookies are present.
+- **Browser-context API execution** - Alexa list reads and mutations are now routed through browser-side `fetch()` calls executed inside Playwright, keeping cookies and request context attached to an actual browser session instead of raw Python HTTP traffic.
+- **Cleaner server modularity** - Playwright lifecycle and browser request handling now live in a dedicated `server/browser_backend.py` module so `server.py` and `server/alexa.py` stay focused on server orchestration and the public Alexa-list facade.
+
+### Notes
+- **This is a strategic rollback from HTTP-only server access** - The pure Python API approach delivered excellent performance, but Amazon began returning anti-automation blocks and `503` responses after short periods of use, making that route unreliable for real-world operation.
+- **The goal is modernization, not a return to old DOM scraping** - The new direction keeps the server browser-based where needed, but aims to use Playwright plus browser-context API calls rather than rebuilding the previous Selenium DOM-driven flow.
+
 ## [2604.003.03] - 2026-04-04
 
 ### Improvements

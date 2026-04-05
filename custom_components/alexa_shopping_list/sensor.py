@@ -25,7 +25,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     update_sensor = AlexaShoppingListSyncSensor(hass, alexa, config_entry)
 
-    async_add_entities([update_sensor], update_before_add=True)
+    async_add_entities([update_sensor], update_before_add=False)
 
 
 class AlexaShoppingListSyncSensor(RestoreEntity, SensorEntity):
@@ -42,6 +42,7 @@ class AlexaShoppingListSyncSensor(RestoreEntity, SensorEntity):
         self._attr_unique_id = "alexa_shopping_list_sync"
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
         self._attr_should_poll = False
+        self._initial_refresh_task = None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -54,6 +55,14 @@ class AlexaShoppingListSyncSensor(RestoreEntity, SensorEntity):
         self.async_on_remove(
             async_track_time_interval(self.hass, self._handle_scheduled_update, interval)
         )
+        self._initial_refresh_task = self.hass.async_create_task(self._run_initial_sync_update())
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._initial_refresh_task is not None and not self._initial_refresh_task.done():
+            self._initial_refresh_task.cancel()
+        await super().async_will_remove_from_hass()
+
+    async def _run_initial_sync_update(self) -> None:
         await self._run_sync_update()
         self.async_write_ha_state()
 
@@ -94,5 +103,4 @@ class AlexaShoppingListSyncSensor(RestoreEntity, SensorEntity):
 
     async def async_update(self) -> None:
         await self._run_sync_update()
-        self.async_write_ha_state()
 

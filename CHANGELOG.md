@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+## [2603.099.00] - 2026-04-09
+
+### Improvements
+- **Amazon anti-bot behavior documented in the implementation direction** - Real-world testing confirmed that Amazon's internal shopping list APIs cannot be used safely as direct long-running server calls, because repeated native Python requests begin to trigger `503` responses and anti-bot blocking after a short time.
+- **Browser-observed `getlistitems` read path under test** - The Playwright backend is now moving its read strategy toward observing the `getlistitems` response naturally emitted by the shopping list page itself, instead of issuing that read endpoint directly from the backend.
+- **Write confirmation logic is now hybrid and experimental** - Add, update, delete, and complete operations still execute from the browser context, but the backend now tries to confirm final list state from the next page-driven `getlistitems` response rather than trusting a standalone follow-up API read.
+
+### Notes
+- **`addlistitem` still preserves the direct write response** - The add flow intentionally keeps parsing the immediate Amazon write response because it contains the newly generated Alexa item ID needed for `ha_id -> alexa_id` linking.
+- **The current Playwright flow is still a test phase** - The project is now explicitly validating a more browser-native strategy: direct browser-context writes where needed, but list-state confirmation captured from the page's own network behavior to reduce anti-bot pressure.
+
 ## [2603.095.00] - 2026-04-05
 
 ### Features

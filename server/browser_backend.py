@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 BROWSER_TIMEOUT_MS = 60000
 BROWSER_ACCEPT_LANGUAGE = "en-US,en;q=0.9,it;q=0.8"
+BROWSER_GETLIST_PATH = "/alexashoppinglists/api/getlistitems"
 BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
@@ -121,6 +122,9 @@ class BrowserBackend:
 
     def _api_url(self, path: str):
         return f"https://www.{self.amazon_url}{path}"
+
+    def _is_getlistitems_response(self, response):
+        return BROWSER_GETLIST_PATH in (response.url or "")
 
     def _read_cookie_cache(self):
         if not os.path.exists(self._cookie_cache_path()):
@@ -258,6 +262,58 @@ class BrowserBackend:
                 "json": parsed,
             }
 
+    def _capture_page_list_items_response(self):
+        with self._lock:
+            page = self._ensure_browser()
+
+            try:
+                with page.expect_response(self._is_getlistitems_response, timeout=BROWSER_TIMEOUT_MS) as response_info:
+                    page.goto(self._shopping_list_page_url(), wait_until="domcontentloaded")
+                response = response_info.value
+                body = response.text()
+            except (PlaywrightTimeoutError, PlaywrightError) as error:
+                raise RuntimeError(f"Playwright page getlistitems capture failed: {error}") from error
+
+            parsed = None
+            if body:
+                try:
+                    parsed = json.loads(body)
+                except json.JSONDecodeError:
+                    parsed = None
+
+            return {
+                "ok": response.ok,
+                "status": response.status,
+                "url": response.url,
+                "content_type": response.headers.get("content-type"),
+                "body": body,
+                "json": parsed,
+            }
+
+    def _refresh_page_and_get_list_items_payload(self):
+        response = self._capture_page_list_items_response()
+        self._ensure_authenticated_response(response, "getlistitems")
+        if not isinstance(response.get("json"), dict):
+            raise RuntimeError("Invalid getlistitems browser response")
+        return response["json"]
+
+    def _normalized_current_list(self):
+        return self._normalize_list_payload(self._refresh_page_and_get_list_items_payload())
+
+    def _write_and_capture_list(self, action_name: str, path: str, method: str, payload=None):
+        response = self._browser_request_json(path, method=method, payload=payload)
+        self._ensure_authenticated_response(response, action_name)
+        try:
+            refreshed = self._normalized_current_list()
+        except Exception as error:
+            logger.warning(
+                "Alexa %s write was accepted but page refresh confirmation failed: %s",
+                action_name,
+                error,
+            )
+            refreshed = None
+        return response, refreshed
+
     def _ensure_authenticated_response(self, response, action: str):
         status = response.get("status")
         body = response.get("body") or ""
@@ -359,11 +415,7 @@ class BrowserBackend:
         }
 
     def _get_list_items_payload(self):
-        response = self._browser_request_json("/alexashoppinglists/api/getlistitems")
-        self._ensure_authenticated_response(response, "getlistitems")
-        if not isinstance(response.get("json"), dict):
-            raise RuntimeError("Invalid getlistitems browser response")
-        return response["json"]
+        return self._refresh_page_and_get_list_items_payload()
 
     def _default_list_payload(self):
         payload = self._get_list_items_payload()
@@ -408,7 +460,8 @@ class BrowserBackend:
 
     def _add_list_item(self, item: str):
         list_id = self._default_list_id()
-        response = self._browser_request_json(
+        response, refreshed = self._write_and_capture_list(
+            "addlistitem",
             f"/alexashoppinglists/api/addlistitem/{list_id}",
             method="POST",
             payload={
@@ -416,7 +469,6 @@ class BrowserBackend:
                 "listItemMetadata": [],
             },
         )
-        self._ensure_authenticated_response(response, "addlistitem")
         if isinstance(response.get("json"), dict):
             item_json = response["json"]
             return {
@@ -428,8 +480,8 @@ class BrowserBackend:
                 "version": item_json.get("version"),
                 "listId": item_json.get("listId"),
                 "defaultList": True,
-            }
-        return None
+            }, refreshed
+        return None, refreshed
 
     def _update_list_item(self, old: str, new: str, alexa_id: str = None):
         list_payload = self._default_list_payload()
@@ -445,13 +497,13 @@ class BrowserBackend:
 
         update_payload = dict(current_item)
         update_payload["value"] = new
-        response = self._browser_request_json(
+        _, refreshed = self._write_and_capture_list(
+            "updatelistitem",
             "/alexashoppinglists/api/updatelistitem",
             method="PUT",
             payload=update_payload,
         )
-        self._ensure_authenticated_response(response, "updatelistitem")
-        return True
+        return True, refreshed
 
     def _complete_list_item(self, item: str, alexa_id: str = None):
         list_payload = self._default_list_payload()
@@ -467,33 +519,33 @@ class BrowserBackend:
 
         update_payload = dict(current_item)
         update_payload["completed"] = True
-        response = self._browser_request_json(
+        _, refreshed = self._write_and_capture_list(
+            "complete list item",
             "/alexashoppinglists/api/updatelistitem",
             method="PUT",
             payload=update_payload,
         )
-        self._ensure_authenticated_response(response, "complete list item")
-        return True
+        return True, refreshed
 
     def _remove_list_item(self, item: str):
         list_payload = self._default_list_payload()
         current_item = self._find_list_item(list_payload, item, completed=False, prefer_latest=False)
         if current_item is None:
-            return False
+            return False, self.get_alexa_list()
 
-        response = self._browser_request_json(
+        _, refreshed = self._write_and_capture_list(
+            "deletelistitem",
             "/alexashoppinglists/api/deletelistitem",
             method="DELETE",
             payload=current_item,
         )
-        self._ensure_authenticated_response(response, "deletelistitem")
-        return True
+        return True, refreshed
 
     # ============================================================
     # Public API
 
     def requires_login(self):
-        response = self._browser_request_json("/alexashoppinglists/api/getlistitems")
+        response = self._capture_page_list_items_response()
 
         if response.get("ok") and isinstance(response.get("json"), dict):
             self.is_authenticated = True
@@ -530,11 +582,11 @@ class BrowserBackend:
         return alexa_items
 
     def complete_alexa_list_item(self, item: str, alexa_id: str = None):
-        completed = self._complete_list_item(item, alexa_id=alexa_id)
+        completed, refreshed = self._complete_list_item(item, alexa_id=alexa_id)
         if not completed:
-            return self.get_alexa_list()
-
-        refreshed = self.get_alexa_list()
+            return refreshed
+        if refreshed is None:
+            refreshed = self.get_alexa_list()
         logger.info(
             "Alexa browser complete result for '%s': %s",
             item,
@@ -544,8 +596,9 @@ class BrowserBackend:
 
     def add_alexa_list_item(self, item: str, include_details: bool = False):
         logger.info("Alexa browser add requested: %s", item)
-        added_item = self._add_list_item(item)
-        refreshed = self.get_alexa_list()
+        added_item, refreshed = self._add_list_item(item)
+        if refreshed is None:
+            refreshed = self.get_alexa_list()
         logger.info(
             "Alexa browser add result for '%s': %s",
             item,
@@ -559,8 +612,9 @@ class BrowserBackend:
         return refreshed
 
     def update_alexa_list_item(self, old: str, new: str, alexa_id: str = None):
-        self._update_list_item(old, new, alexa_id=alexa_id)
-        refreshed = self.get_alexa_list()
+        _, refreshed = self._update_list_item(old, new, alexa_id=alexa_id)
+        if refreshed is None:
+            refreshed = self.get_alexa_list()
         logger.info(
             "Alexa browser update result for '%s' -> '%s': %s",
             old,
@@ -570,8 +624,9 @@ class BrowserBackend:
         return refreshed
 
     def remove_alexa_list_item(self, item: str):
-        self._remove_list_item(item)
-        refreshed = self.get_alexa_list()
+        _, refreshed = self._remove_list_item(item)
+        if refreshed is None:
+            refreshed = self.get_alexa_list()
         logger.info(
             "Alexa browser delete result for '%s': %s",
             item,
@@ -609,7 +664,7 @@ class BrowserBackend:
 
         for item in add_items:
             logger.info("Alexa browser bulk add item: %s", item)
-            added_item = self._add_list_item(item)
+            added_item, _ = self._add_list_item(item)
             if added_item is not None:
                 added_items_result.append(added_item)
 
@@ -635,7 +690,14 @@ class BrowserBackend:
             else:
                 self._complete_list_item(item)
 
-        refreshed = self.get_alexa_list()
+        try:
+            refreshed = self._normalized_current_list()
+        except Exception as error:
+            logger.warning(
+                "Alexa bulk apply completed but page refresh confirmation failed: %s",
+                error,
+            )
+            refreshed = self.get_alexa_list()
         logger.info(
             "Alexa browser bulk apply result: %s",
             json.dumps(self._items_log_summary(refreshed), ensure_ascii=False),

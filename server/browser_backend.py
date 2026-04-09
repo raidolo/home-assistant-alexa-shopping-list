@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import threading
+import time
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -12,6 +13,7 @@ from playwright.sync_api import sync_playwright
 logger = logging.getLogger(__name__)
 
 BROWSER_TIMEOUT_MS = 60000
+BROWSER_AUTH_TIMEOUT_MS = 10000
 BROWSER_ACCEPT_LANGUAGE = "en-US,en;q=0.9,it;q=0.8"
 BROWSER_GETLIST_PATH = "/alexashoppinglists/api/getlistitems"
 BROWSER_USER_AGENT = (
@@ -35,6 +37,7 @@ class BrowserBackend:
         self._context = None
         self._page = None
         self._lock = threading.RLock()
+        self._last_list_response = None
 
     # ============================================================
     # Lifecycle
@@ -101,6 +104,7 @@ class BrowserBackend:
             self._context.add_cookies(cookies)
 
         self._page = self._context.new_page()
+        self._page.on("response", self._cache_list_response)
         self._page.set_default_timeout(BROWSER_TIMEOUT_MS)
         self._page.set_default_navigation_timeout(BROWSER_TIMEOUT_MS)
         self._page.goto(self._shopping_list_page_url(), wait_until="domcontentloaded")
@@ -125,6 +129,32 @@ class BrowserBackend:
 
     def _is_getlistitems_response(self, response):
         return BROWSER_GETLIST_PATH in (response.url or "")
+
+    def _cache_list_response(self, response):
+        if not self._is_getlistitems_response(response):
+            return
+
+        try:
+            body = response.text()
+        except Exception:
+            body = ""
+
+        parsed = None
+        if body:
+            try:
+                parsed = json.loads(body)
+            except json.JSONDecodeError:
+                parsed = None
+
+        self._last_list_response = {
+            "ok": response.ok,
+            "status": response.status,
+            "url": response.url,
+            "content_type": response.headers.get("content-type"),
+            "body": body,
+            "json": parsed,
+            "captured_at": time.time(),
+        }
 
     def _read_cookie_cache(self):
         if not os.path.exists(self._cookie_cache_path()):
@@ -265,6 +295,11 @@ class BrowserBackend:
     def _capture_page_list_items_response(self):
         with self._lock:
             page = self._ensure_browser()
+            previous_capture_time = (
+                self._last_list_response.get("captured_at")
+                if isinstance(self._last_list_response, dict)
+                else None
+            )
 
             try:
                 with page.expect_response(self._is_getlistitems_response, timeout=BROWSER_TIMEOUT_MS) as response_info:
@@ -272,6 +307,42 @@ class BrowserBackend:
                 response = response_info.value
                 body = response.text()
             except (PlaywrightTimeoutError, PlaywrightError) as error:
+                cached_response = self._last_list_response
+                current_url = page.url or ""
+                if "/ap/signin" in current_url or "/ap/mfa" in current_url:
+                    return {
+                        "ok": False,
+                        "status": 401,
+                        "url": current_url,
+                        "content_type": "text/html",
+                        "body": "",
+                        "json": None,
+                    }
+
+                if (
+                    isinstance(cached_response, dict)
+                    and cached_response.get("captured_at") is not None
+                    and cached_response.get("captured_at") != previous_capture_time
+                ):
+                    logger.warning(
+                        "Playwright page getlistitems capture timed out, using freshly cached page response"
+                    )
+                    return {
+                        key: value
+                        for key, value in cached_response.items()
+                        if key != "captured_at"
+                    }
+
+                if isinstance(cached_response, dict):
+                    logger.warning(
+                        "Playwright page getlistitems capture timed out, using last cached page response"
+                    )
+                    return {
+                        key: value
+                        for key, value in cached_response.items()
+                        if key != "captured_at"
+                    }
+
                 raise RuntimeError(f"Playwright page getlistitems capture failed: {error}") from error
 
             parsed = None
@@ -288,6 +359,28 @@ class BrowserBackend:
                 "content_type": response.headers.get("content-type"),
                 "body": body,
                 "json": parsed,
+            }
+
+    def _navigate_for_auth_check(self):
+        with self._lock:
+            page = self._ensure_browser()
+
+            try:
+                page.goto(self._shopping_list_page_url(), wait_until="domcontentloaded")
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except PlaywrightTimeoutError:
+                    pass
+            except (PlaywrightTimeoutError, PlaywrightError) as error:
+                raise RuntimeError(f"Playwright auth navigation failed: {error}") from error
+
+            return {
+                "ok": True,
+                "status": 200,
+                "url": page.url,
+                "content_type": "text/html",
+                "body": "",
+                "json": None,
             }
 
     def _refresh_page_and_get_list_items_payload(self):
@@ -545,19 +638,20 @@ class BrowserBackend:
     # Public API
 
     def requires_login(self):
-        response = self._capture_page_list_items_response()
+        response = self._navigate_for_auth_check()
 
-        if response.get("ok") and isinstance(response.get("json"), dict):
+        response_url = response.get("url") or ""
+        if "/ap/signin" not in response_url and "/ap/mfa" not in response_url:
             self.is_authenticated = True
             return False
 
         status = response.get("status")
         body = response.get("body") or ""
-        response_url = response.get("url") or ""
         if (
             status == 401
             or "AuthenticationFailure" in body
             or "/ap/signin" in response_url
+            or "/ap/mfa" in response_url
         ):
             self.is_authenticated = False
             logger.warning(

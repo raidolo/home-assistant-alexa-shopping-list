@@ -12,7 +12,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends tini \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r /server/requirements.txt \
-    && python -m playwright install --with-deps --only-shell chromium \
+    && python -m playwright install --with-deps chromium \
     && rm /server/requirements.txt
 
 COPY alexa.py /server/alexa.py

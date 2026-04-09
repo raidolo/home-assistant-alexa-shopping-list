@@ -104,7 +104,6 @@ class BrowserBackend:
             self._context.add_cookies(cookies)
 
         self._page = self._context.new_page()
-        self._page.on("response", self._cache_list_response)
         self._page.set_default_timeout(BROWSER_TIMEOUT_MS)
         self._page.set_default_navigation_timeout(BROWSER_TIMEOUT_MS)
         self._page.goto(self._shopping_list_page_url(), wait_until="domcontentloaded")
@@ -129,32 +128,6 @@ class BrowserBackend:
 
     def _is_getlistitems_response(self, response):
         return BROWSER_GETLIST_PATH in (response.url or "")
-
-    def _cache_list_response(self, response):
-        if not self._is_getlistitems_response(response):
-            return
-
-        try:
-            body = response.text()
-        except Exception:
-            body = ""
-
-        parsed = None
-        if body:
-            try:
-                parsed = json.loads(body)
-            except json.JSONDecodeError:
-                parsed = None
-
-        self._last_list_response = {
-            "ok": response.ok,
-            "status": response.status,
-            "url": response.url,
-            "content_type": response.headers.get("content-type"),
-            "body": body,
-            "json": parsed,
-            "captured_at": time.time(),
-        }
 
     def _read_cookie_cache(self):
         if not os.path.exists(self._cookie_cache_path()):
@@ -352,13 +325,20 @@ class BrowserBackend:
                 except json.JSONDecodeError:
                     parsed = None
 
-            return {
+            captured = {
                 "ok": response.ok,
                 "status": response.status,
                 "url": response.url,
                 "content_type": response.headers.get("content-type"),
                 "body": body,
                 "json": parsed,
+                "captured_at": time.time(),
+            }
+            self._last_list_response = captured
+            return {
+                key: value
+                for key, value in captured.items()
+                if key != "captured_at"
             }
 
     def _navigate_for_auth_check(self):

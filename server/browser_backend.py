@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 BROWSER_TIMEOUT_MS = 60000
 BROWSER_AUTH_TIMEOUT_MS = 10000
+BROWSER_IDLE_CLOSE_SECONDS = 120
 BROWSER_ACCEPT_LANGUAGE = "en-US,en;q=0.9,it;q=0.8"
 BROWSER_GETLIST_PATH = "/alexashoppinglists/api/getlistitems"
 BROWSER_USER_AGENT = (
@@ -38,12 +39,14 @@ class BrowserBackend:
         self._page = None
         self._lock = threading.RLock()
         self._last_list_response = None
+        self._idle_close_timer = None
 
     # ============================================================
     # Lifecycle
 
     def close(self):
         with self._lock:
+            self._cancel_idle_close_timer()
             if self._page is not None:
                 try:
                     self._page.close()
@@ -72,6 +75,37 @@ class BrowserBackend:
                     pass
                 self._playwright = None
 
+    def _cancel_idle_close_timer(self):
+        if self._idle_close_timer is not None:
+            self._idle_close_timer.cancel()
+            self._idle_close_timer = None
+
+    def _schedule_idle_close(self):
+        with self._lock:
+            self._cancel_idle_close_timer()
+            if self._page is None:
+                return
+
+            self._idle_close_timer = threading.Timer(
+                BROWSER_IDLE_CLOSE_SECONDS,
+                self._close_for_idle_timeout,
+            )
+            self._idle_close_timer.daemon = True
+            self._idle_close_timer.start()
+
+    def _close_for_idle_timeout(self):
+        with self._lock:
+            if self._page is None:
+                self._idle_close_timer = None
+                return
+
+            logger.info(
+                "Playwright browser idle timeout reached (%ss), closing browser",
+                BROWSER_IDLE_CLOSE_SECONDS,
+            )
+            self._cancel_idle_close_timer()
+            self.close()
+
     def __del__(self):
         try:
             self.close()
@@ -80,8 +114,10 @@ class BrowserBackend:
 
     def _ensure_browser(self):
         if self._page is not None:
+            self._cancel_idle_close_timer()
             return self._page
 
+        self._cancel_idle_close_timer()
         self._playwright = sync_playwright().start()
         browser_type = self._playwright.chromium
         logger.info(
@@ -262,112 +298,118 @@ class BrowserBackend:
         }
 
     def _browser_request_json(self, path: str, method: str = "GET", payload=None):
-        with self._lock:
-            page = self._ensure_browser()
+        try:
+            with self._lock:
+                page = self._ensure_browser()
 
-            try:
-                response = page.evaluate(
-                    """
-                    async ({url, method, payload}) => {
-                        const headers = {
-                            "accept": "application/json",
-                            "cache-control": "max-age=0",
-                            "pragma": "no-cache"
-                        };
-                        if (payload !== null) {
-                            headers["content-type"] = "application/json";
-                        }
-
-                        const res = await fetch(url, {
-                            method,
-                            credentials: "include",
-                            headers,
-                            body: payload === null ? undefined : JSON.stringify(payload),
-                        });
-
-                        const text = await res.text();
-                        return {
-                            ok: res.ok,
-                            status: res.status,
-                            url: res.url,
-                            contentType: res.headers.get("content-type"),
-                            body: text,
-                        };
-                    }
-                    """,
-                    {
-                        "url": self._api_url(path),
-                        "method": method,
-                        "payload": payload,
-                    },
-                )
-            except (PlaywrightTimeoutError, PlaywrightError) as error:
-                raise RuntimeError(f"Playwright browser request failed: {error}") from error
-
-            parsed = None
-            body = response.get("body") or ""
-            if body:
                 try:
-                    parsed = json.loads(body)
-                except json.JSONDecodeError:
-                    parsed = None
+                    response = page.evaluate(
+                        """
+                        async ({url, method, payload}) => {
+                            const headers = {
+                                "accept": "application/json",
+                                "cache-control": "max-age=0",
+                                "pragma": "no-cache"
+                            };
+                            if (payload !== null) {
+                                headers["content-type"] = "application/json";
+                            }
 
-            return {
-                "ok": bool(response.get("ok")),
-                "status": response.get("status"),
-                "url": response.get("url"),
-                "content_type": response.get("contentType"),
-                "body": body,
-                "json": parsed,
-            }
+                            const res = await fetch(url, {
+                                method,
+                                credentials: "include",
+                                headers,
+                                body: payload === null ? undefined : JSON.stringify(payload),
+                            });
+
+                            const text = await res.text();
+                            return {
+                                ok: res.ok,
+                                status: res.status,
+                                url: res.url,
+                                contentType: res.headers.get("content-type"),
+                                body: text,
+                            };
+                        }
+                        """,
+                        {
+                            "url": self._api_url(path),
+                            "method": method,
+                            "payload": payload,
+                        },
+                    )
+                except (PlaywrightTimeoutError, PlaywrightError) as error:
+                    raise RuntimeError(f"Playwright browser request failed: {error}") from error
+
+                parsed = None
+                body = response.get("body") or ""
+                if body:
+                    try:
+                        parsed = json.loads(body)
+                    except json.JSONDecodeError:
+                        parsed = None
+
+                return {
+                    "ok": bool(response.get("ok")),
+                    "status": response.get("status"),
+                    "url": response.get("url"),
+                    "content_type": response.get("contentType"),
+                    "body": body,
+                    "json": parsed,
+                }
+        finally:
+            self._schedule_idle_close()
 
     def _open_json_in_browser(self, path: str, action_name: str):
-        with self._lock:
-            self._ensure_browser()
-            page = self._context.new_page()
-            page.set_default_timeout(BROWSER_TIMEOUT_MS)
-            page.set_default_navigation_timeout(BROWSER_TIMEOUT_MS)
+        try:
+            with self._lock:
+                self._ensure_browser()
+                page = self._context.new_page()
+                page.set_default_timeout(BROWSER_TIMEOUT_MS)
+                page.set_default_navigation_timeout(BROWSER_TIMEOUT_MS)
 
-            try:
-                api_url = self._api_url(path)
-                logger.info("Opening %s directly in browser page: %s", action_name, api_url)
-                response = page.goto(api_url, wait_until="domcontentloaded")
-                if response is None:
-                    raise RuntimeError(f"Browser navigation for {action_name} returned no response")
-                body = page.locator("body").inner_text(timeout=5000)
-            except (PlaywrightTimeoutError, PlaywrightError) as error:
-                current_url = page.url or ""
-                if "/ap/signin" in current_url or "/ap/mfa" in current_url:
-                    return {
-                        "ok": False,
-                        "status": 401,
-                        "url": current_url,
-                        "content_type": "text/html",
-                        "body": "",
-                        "json": None,
-                    }
-                raise RuntimeError(f"Playwright browser page open failed during {action_name}: {error}") from error
-            finally:
                 try:
-                    page.close()
-                except Exception:
-                    pass
+                    api_url = self._api_url(path)
+                    logger.info("Opening %s directly in browser page: %s", action_name, api_url)
+                    response = page.goto(api_url, wait_until="domcontentloaded")
+                    if response is None:
+                        raise RuntimeError(f"Browser navigation for {action_name} returned no response")
+                    body = page.locator("body").inner_text(timeout=5000)
+                except (PlaywrightTimeoutError, PlaywrightError) as error:
+                    current_url = page.url or ""
+                    if "/ap/signin" in current_url or "/ap/mfa" in current_url:
+                        return {
+                            "ok": False,
+                            "status": 401,
+                            "url": current_url,
+                            "content_type": "text/html",
+                            "body": "",
+                            "json": None,
+                        }
+                    raise RuntimeError(f"Playwright browser page open failed during {action_name}: {error}") from error
+                finally:
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
 
-            parsed = None
-            if body:
-                try:
-                    parsed = json.loads(body)
-                except json.JSONDecodeError:
-                    parsed = None
+                parsed = None
+                if body:
+                    try:
+                        parsed = json.loads(body)
+                    except json.JSONDecodeError:
+                        parsed = None
 
-            return {
-                "ok": response.ok,
-                "status": response.status,
-                "url": response.url,
-                "content_type": response.headers.get("content-type"),
-                "body": body,
-                "json": parsed,
-            }
+                return {
+                    "ok": response.ok,
+                    "status": response.status,
+                    "url": response.url,
+                    "content_type": response.headers.get("content-type"),
+                    "body": body,
+                    "json": parsed,
+                }
+        finally:
+            self._schedule_idle_close()
 
     def _navigate_for_auth_check(self):
         return self._open_json_in_browser(BROWSER_GETLIST_PATH, "auth check")

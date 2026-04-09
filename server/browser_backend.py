@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import queue
 import threading
 import time
 
@@ -40,40 +41,101 @@ class BrowserBackend:
         self._lock = threading.RLock()
         self._last_list_response = None
         self._idle_close_timer = None
+        self._worker_queue = queue.Queue()
+        self._worker_thread = None
+        self._worker_thread_id = None
+        self._worker_stop = object()
 
     # ============================================================
     # Lifecycle
 
+    def _ensure_worker(self):
+        with self._lock:
+            if self._worker_thread is not None and self._worker_thread.is_alive():
+                return
+
+            self._worker_thread = threading.Thread(
+                target=self._worker_loop,
+                name="asl-playwright-worker",
+                daemon=True,
+            )
+            self._worker_thread.start()
+
+    def _worker_loop(self):
+        self._worker_thread_id = threading.get_ident()
+        while True:
+            task = self._worker_queue.get()
+            if task is self._worker_stop:
+                break
+
+            func, result_queue = task
+            try:
+                result_queue.put((True, func()))
+            except Exception as error:
+                result_queue.put((False, error))
+
+        self._worker_thread_id = None
+
+    def _run_on_worker(self, func):
+        if threading.get_ident() == self._worker_thread_id:
+            return func()
+
+        self._ensure_worker()
+        result_queue = queue.Queue(maxsize=1)
+        self._worker_queue.put((func, result_queue))
+        ok, value = result_queue.get()
+        if ok:
+            return value
+        raise value
+
+    def _dispose_browser_internal(self):
+        self._cancel_idle_close_timer()
+        if self._page is not None:
+            try:
+                self._page.close()
+            except Exception:
+                pass
+            self._page = None
+
+        if self._context is not None:
+            try:
+                self._context.close()
+            except Exception:
+                pass
+            self._context = None
+
+        if self._browser is not None:
+            try:
+                self._browser.close()
+            except Exception:
+                pass
+            self._browser = None
+
+        if self._playwright is not None:
+            try:
+                self._playwright.stop()
+            except Exception:
+                pass
+            self._playwright = None
+
     def close(self):
         with self._lock:
             self._cancel_idle_close_timer()
-            if self._page is not None:
-                try:
-                    self._page.close()
-                except Exception:
-                    pass
-                self._page = None
+            worker = self._worker_thread
 
-            if self._context is not None:
-                try:
-                    self._context.close()
-                except Exception:
-                    pass
-                self._context = None
+        if worker is None:
+            self._dispose_browser_internal()
+            return
 
-            if self._browser is not None:
-                try:
-                    self._browser.close()
-                except Exception:
-                    pass
-                self._browser = None
-
-            if self._playwright is not None:
-                try:
-                    self._playwright.stop()
-                except Exception:
-                    pass
-                self._playwright = None
+        try:
+            self._run_on_worker(self._dispose_browser_internal)
+        finally:
+            if threading.get_ident() != self._worker_thread_id:
+                self._worker_queue.put(self._worker_stop)
+                worker.join(timeout=5)
+            with self._lock:
+                self._worker_thread = None
+                self._worker_thread_id = None
 
     def _cancel_idle_close_timer(self):
         if self._idle_close_timer is not None:
@@ -95,16 +157,20 @@ class BrowserBackend:
 
     def _close_for_idle_timeout(self):
         with self._lock:
-            if self._page is None:
-                self._idle_close_timer = None
-                return
+            has_page = self._page is not None
+            self._idle_close_timer = None
 
-            logger.info(
-                "Playwright browser idle timeout reached (%ss), closing browser",
-                BROWSER_IDLE_CLOSE_SECONDS,
-            )
-            self._cancel_idle_close_timer()
-            self.close()
+        if not has_page:
+            return
+
+        logger.info(
+            "Playwright browser idle timeout reached (%ss), closing browser",
+            BROWSER_IDLE_CLOSE_SECONDS,
+        )
+        try:
+            self._run_on_worker(self._dispose_browser_internal)
+        except Exception as error:
+            logger.warning("Playwright idle close failed: %s", error)
 
     def __del__(self):
         try:
@@ -297,6 +363,40 @@ class BrowserBackend:
             "body_snippet": compact_body,
         }
 
+    def _response_requires_login(self, response):
+        status = response.get("status")
+        body = (response.get("body") or "").lower()
+        response_url = (response.get("url") or "").lower()
+
+        login_markers = (
+            "/ap/signin",
+            "/ap/mfa",
+            "authenticationfailure",
+            "sign in",
+            "ap/signin",
+            "ap/mfa",
+        )
+
+        if status == 401:
+            return True
+
+        if any(marker in response_url for marker in ("/ap/signin", "/ap/mfa")):
+            return True
+
+        if any(marker in body for marker in login_markers):
+            return True
+
+        return False
+
+    def _mark_not_authenticated(self, action: str, response):
+        self.is_authenticated = False
+        logger.warning(
+            "Amazon auth rejected during %s: %s | cookies=%s",
+            action,
+            json.dumps(self._response_debug_summary(response), ensure_ascii=False),
+            json.dumps(self._cookie_debug_summary(), ensure_ascii=False),
+        )
+
     def _browser_request_json(self, path: str, method: str = "GET", payload=None):
         try:
             with self._lock:
@@ -441,20 +541,8 @@ class BrowserBackend:
     def _ensure_authenticated_response(self, response, action: str):
         status = response.get("status")
         body = response.get("body") or ""
-        response_url = response.get("url") or ""
-
-        if (
-            status == 401
-            or "AuthenticationFailure" in body
-            or "/ap/signin" in response_url
-        ):
-            self.is_authenticated = False
-            logger.warning(
-                "Amazon auth rejected during %s: %s | cookies=%s",
-                action,
-                json.dumps(self._response_debug_summary(response), ensure_ascii=False),
-                json.dumps(self._cookie_debug_summary(), ensure_ascii=False),
-            )
+        if self._response_requires_login(response):
+            self._mark_not_authenticated(action, response)
             raise NotAuthenticatedError(f"Amazon authentication required during {action}")
 
         if response.get("ok"):
@@ -669,31 +757,23 @@ class BrowserBackend:
     # Public API
 
     def requires_login(self):
+        return self._run_on_worker(self._requires_login_impl)
+
+    def _requires_login_impl(self):
         response = self._navigate_for_auth_check()
 
-        response_url = response.get("url") or ""
-        if "/ap/signin" not in response_url and "/ap/mfa" not in response_url:
+        if self._response_requires_login(response):
+            self._mark_not_authenticated("auth check", response)
+            return True
+
+        if response.get("ok") and isinstance(response.get("json"), dict):
             self.is_authenticated = True
             return False
 
         status = response.get("status")
         body = response.get("body") or ""
-        if (
-            status == 401
-            or "AuthenticationFailure" in body
-            or "/ap/signin" in response_url
-            or "/ap/mfa" in response_url
-        ):
-            self.is_authenticated = False
-            logger.warning(
-                "Amazon auth check determined login is required: %s | cookies=%s",
-                json.dumps(self._response_debug_summary(response), ensure_ascii=False),
-                json.dumps(self._cookie_debug_summary(), ensure_ascii=False),
-            )
-            return True
-
         logger.warning(
-            "Amazon browser auth check returned an unexpected response: %s | cookies=%s",
+            "Amazon browser auth check returned a non-auth unexpected response: %s | cookies=%s",
             json.dumps(self._response_debug_summary(response), ensure_ascii=False),
             json.dumps(self._cookie_debug_summary(), ensure_ascii=False),
         )
@@ -702,11 +782,17 @@ class BrowserBackend:
         )
 
     def get_alexa_list(self):
+        return self._run_on_worker(self._get_alexa_list_impl)
+
+    def _get_alexa_list_impl(self):
         alexa_items = self._normalize_list_payload(self._get_list_items_payload())
         logger.info("Alexa list read via Playwright browser API")
         return alexa_items
 
     def complete_alexa_list_item(self, item: str, alexa_id: str = None):
+        return self._run_on_worker(lambda: self._complete_alexa_list_item_impl(item, alexa_id=alexa_id))
+
+    def _complete_alexa_list_item_impl(self, item: str, alexa_id: str = None):
         completed, refreshed = self._complete_list_item(item, alexa_id=alexa_id)
         if not completed:
             return refreshed
@@ -720,6 +806,11 @@ class BrowserBackend:
         return refreshed
 
     def add_alexa_list_item(self, item: str, include_details: bool = False):
+        return self._run_on_worker(
+            lambda: self._add_alexa_list_item_impl(item, include_details=include_details)
+        )
+
+    def _add_alexa_list_item_impl(self, item: str, include_details: bool = False):
         logger.info("Alexa browser add requested: %s", item)
         added_item, refreshed = self._add_list_item(item)
         if refreshed is None:
@@ -737,6 +828,11 @@ class BrowserBackend:
         return refreshed
 
     def update_alexa_list_item(self, old: str, new: str, alexa_id: str = None):
+        return self._run_on_worker(
+            lambda: self._update_alexa_list_item_impl(old, new, alexa_id=alexa_id)
+        )
+
+    def _update_alexa_list_item_impl(self, old: str, new: str, alexa_id: str = None):
         _, refreshed = self._update_list_item(old, new, alexa_id=alexa_id)
         if refreshed is None:
             refreshed = self.get_alexa_list()
@@ -749,6 +845,9 @@ class BrowserBackend:
         return refreshed
 
     def remove_alexa_list_item(self, item: str):
+        return self._run_on_worker(lambda: self._remove_alexa_list_item_impl(item))
+
+    def _remove_alexa_list_item_impl(self, item: str):
         _, refreshed = self._remove_list_item(item)
         if refreshed is None:
             refreshed = self.get_alexa_list()
@@ -760,6 +859,24 @@ class BrowserBackend:
         return refreshed
 
     def bulk_apply_alexa_list_changes(
+        self,
+        add_items=None,
+        remove_items=None,
+        update_items=None,
+        complete_items=None,
+        include_details: bool = False,
+    ):
+        return self._run_on_worker(
+            lambda: self._bulk_apply_alexa_list_changes_impl(
+                add_items=add_items,
+                remove_items=remove_items,
+                update_items=update_items,
+                complete_items=complete_items,
+                include_details=include_details,
+            )
+        )
+
+    def _bulk_apply_alexa_list_changes_impl(
         self,
         add_items=None,
         remove_items=None,

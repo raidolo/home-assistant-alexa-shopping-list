@@ -83,9 +83,19 @@ class BrowserBackend:
             return self._page
 
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(
+        browser_type = self._playwright.chromium
+        logger.info(
+            "Launching Playwright Chromium browser (executable_path=%s, headless=%s)",
+            getattr(browser_type, "executable_path", "<unknown>"),
+            True,
+        )
+        self._browser = browser_type.launch(
             headless=True,
             args=["--disable-dev-shm-usage", "--no-sandbox"],
+        )
+        logger.info(
+            "Playwright Chromium launched (version=%s)",
+            self._browser.version,
         )
         self._context = self._browser.new_context(
             ignore_https_errors=False,
@@ -311,79 +321,37 @@ class BrowserBackend:
                 "json": parsed,
             }
 
-    def _capture_page_list_items_response(self):
+    def _open_json_in_browser(self, path: str, action_name: str):
         with self._lock:
-            page = self._ensure_browser()
-            previous_capture_time = (
-                self._last_list_response.get("captured_at")
-                if isinstance(self._last_list_response, dict)
-                else None
-            )
-            logger.info(
-                "Waiting for page-driven getlistitems response (current_url=%s)",
-                page.url or "",
-            )
+            self._ensure_browser()
+            page = self._context.new_page()
+            page.set_default_timeout(BROWSER_TIMEOUT_MS)
+            page.set_default_navigation_timeout(BROWSER_TIMEOUT_MS)
 
             try:
-                response, body = self._capture_page_list_items_response_attempt(
-                    page,
-                    lambda: page.reload(wait_until="domcontentloaded"),
-                    "reload",
-                )
+                api_url = self._api_url(path)
+                logger.info("Opening %s directly in browser page: %s", action_name, api_url)
+                response = page.goto(api_url, wait_until="domcontentloaded")
+                if response is None:
+                    raise RuntimeError(f"Browser navigation for {action_name} returned no response")
+                body = page.locator("body").inner_text(timeout=5000)
             except (PlaywrightTimeoutError, PlaywrightError) as error:
-                logger.warning(
-                    "Playwright page getlistitems capture via reload failed, forcing fresh navigation: %s",
-                    error,
-                )
+                current_url = page.url or ""
+                if "/ap/signin" in current_url or "/ap/mfa" in current_url:
+                    return {
+                        "ok": False,
+                        "status": 401,
+                        "url": current_url,
+                        "content_type": "text/html",
+                        "body": "",
+                        "json": None,
+                    }
+                raise RuntimeError(f"Playwright browser page open failed during {action_name}: {error}") from error
+            finally:
                 try:
-                    response, body = self._capture_page_list_items_response_attempt(
-                        page,
-                        lambda: page.goto(self._shopping_list_page_url_with_nonce(), wait_until="domcontentloaded"),
-                        "fresh_navigation",
-                    )
-                except (PlaywrightTimeoutError, PlaywrightError) as second_error:
-                    cached_response = self._last_list_response
-                    current_url = page.url or ""
-                    logger.warning(
-                        "Playwright page getlistitems capture failed after fresh navigation (current_url=%s): %s",
-                        current_url,
-                        second_error,
-                    )
-                    if "/ap/signin" in current_url or "/ap/mfa" in current_url:
-                        return {
-                            "ok": False,
-                            "status": 401,
-                            "url": current_url,
-                            "content_type": "text/html",
-                            "body": "",
-                            "json": None,
-                        }
-
-                    if (
-                        isinstance(cached_response, dict)
-                        and cached_response.get("captured_at") is not None
-                        and cached_response.get("captured_at") != previous_capture_time
-                    ):
-                        logger.warning(
-                            "Playwright page getlistitems capture timed out, using freshly cached page response"
-                        )
-                        return {
-                            key: value
-                            for key, value in cached_response.items()
-                            if key != "captured_at"
-                        }
-
-                    if isinstance(cached_response, dict):
-                        logger.warning(
-                            "Playwright page getlistitems capture timed out, using last cached page response"
-                        )
-                        return {
-                            key: value
-                            for key, value in cached_response.items()
-                            if key != "captured_at"
-                        }
-
-                    raise RuntimeError(f"Playwright page getlistitems capture failed: {second_error}") from second_error
+                    page.close()
+                except Exception:
+                    pass
 
             parsed = None
             if body:
@@ -392,69 +360,20 @@ class BrowserBackend:
                 except json.JSONDecodeError:
                     parsed = None
 
-            captured = {
+            return {
                 "ok": response.ok,
                 "status": response.status,
                 "url": response.url,
                 "content_type": response.headers.get("content-type"),
                 "body": body,
                 "json": parsed,
-                "captured_at": time.time(),
             }
-            self._last_list_response = captured
-            logger.info(
-                "Captured page-driven getlistitems response via browser (status=%s, url=%s)",
-                captured["status"],
-                captured["url"],
-            )
-            return {
-                key: value
-                for key, value in captured.items()
-                if key != "captured_at"
-            }
-
-    def _capture_page_list_items_response_attempt(self, page, trigger_navigation, attempt_name):
-        logger.info(
-            "Triggering %s while waiting for getlistitems (current_url=%s)",
-            attempt_name,
-            page.url or "",
-        )
-        with page.expect_response(self._is_getlistitems_response, timeout=BROWSER_TIMEOUT_MS) as response_info:
-            trigger_navigation()
-        response = response_info.value
-        body = response.text()
-        logger.info(
-            "Observed getlistitems response during %s (status=%s, url=%s)",
-            attempt_name,
-            response.status,
-            response.url,
-        )
-        return response, body
 
     def _navigate_for_auth_check(self):
-        with self._lock:
-            page = self._ensure_browser()
-
-            try:
-                page.goto(self._shopping_list_page_url(), wait_until="domcontentloaded")
-                try:
-                    page.wait_for_load_state("networkidle", timeout=5000)
-                except PlaywrightTimeoutError:
-                    pass
-            except (PlaywrightTimeoutError, PlaywrightError) as error:
-                raise RuntimeError(f"Playwright auth navigation failed: {error}") from error
-
-            return {
-                "ok": True,
-                "status": 200,
-                "url": page.url,
-                "content_type": "text/html",
-                "body": "",
-                "json": None,
-            }
+        return self._open_json_in_browser(BROWSER_GETLIST_PATH, "auth check")
 
     def _refresh_page_and_get_list_items_payload(self):
-        response = self._capture_page_list_items_response()
+        response = self._open_json_in_browser(BROWSER_GETLIST_PATH, "getlistitems")
         self._ensure_authenticated_response(response, "getlistitems")
         if not isinstance(response.get("json"), dict):
             raise RuntimeError("Invalid getlistitems browser response")

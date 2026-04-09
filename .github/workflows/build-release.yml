@@ -67,6 +67,8 @@ jobs:
           push: true
           provenance: false
           tags: ${{ env.DOCKER_TAGS }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
   
 
   release:

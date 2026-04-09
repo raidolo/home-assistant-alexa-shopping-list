@@ -104,6 +104,8 @@ class BrowserBackend:
             self._context.add_cookies(cookies)
 
         self._page = self._context.new_page()
+        self._page.on("request", self._log_page_request)
+        self._page.on("response", self._log_page_response)
         self._page.set_default_timeout(BROWSER_TIMEOUT_MS)
         self._page.set_default_navigation_timeout(BROWSER_TIMEOUT_MS)
         self._page.goto(self._shopping_list_page_url(), wait_until="domcontentloaded")
@@ -131,6 +133,47 @@ class BrowserBackend:
 
     def _is_getlistitems_response(self, response):
         return BROWSER_GETLIST_PATH in (response.url or "")
+
+    def _should_log_network_event(self, url: str, resource_type: str = ""):
+        if not url:
+            return False
+        if "alexashoppinglists" in url:
+            return True
+        if resource_type == "fetch" and "amazon." in url:
+            return True
+        return False
+
+    def _log_page_request(self, request):
+        try:
+            url = request.url or ""
+            resource_type = request.resource_type or ""
+            if not self._should_log_network_event(url, resource_type):
+                return
+            logger.info(
+                "Playwright request observed (resource_type=%s, method=%s, url=%s)",
+                resource_type,
+                request.method,
+                url,
+            )
+        except Exception:
+            return
+
+    def _log_page_response(self, response):
+        try:
+            url = response.url or ""
+            request = response.request
+            resource_type = request.resource_type or ""
+            if not self._should_log_network_event(url, resource_type):
+                return
+            logger.info(
+                "Playwright response observed (resource_type=%s, method=%s, status=%s, url=%s)",
+                resource_type,
+                request.method,
+                response.status,
+                url,
+            )
+        except Exception:
+            return
 
     def _read_cookie_cache(self):
         if not os.path.exists(self._cookie_cache_path()):

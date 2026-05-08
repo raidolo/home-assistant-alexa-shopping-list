@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
-import logging
 import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
 from .asl import AlexaShoppingListSync
 from homeassistant.helpers.event import async_track_time_interval, async_call_later
-from homeassistant.components.shopping_list.common import _get_shopping_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,15 +19,36 @@ CONF_SYNC_MINS = "sync_mins"
 SERVICE_SYNC = "sync_alexa_shopping_list"
 
 
+def _get_shopping_list_loader(hass) -> Callable[[], Awaitable[None]]:
+    """Return the compatible shopping list loader for the current HA version."""
+
+    async def _loader():
+        try:
+            from homeassistant.components.shopping_list.common import _get_shopping_data
+
+            await _get_shopping_data(hass).async_load()
+            return
+
+        except ImportError:
+            pass
+
+        except Exception as e:
+            _LOGGER.debug("Shopping list runtime_data refresh skipped: %s", e)
+
+        shopping_list = hass.data.get("shopping_list")
+
+        if shopping_list is None:
+            _LOGGER.debug("Shopping list legacy refresh skipped: hass.data['shopping_list'] is not available")
+            return
+
+        await shopping_list.async_load()
+
+    return _loader
+
+
 async def async_setup_entry(hass, entry):
     """Set up platform from a ConfigEntry."""
     hass.data.setdefault(DOMAIN, {})
-
-    async def _shopping_list_refresh():
-        try:
-            await _get_shopping_data(hass).async_load()
-        except Exception as e:
-            _LOGGER.debug("Shopping list refresh skipped: %s", e)
 
     try:
 
@@ -36,7 +57,7 @@ async def async_setup_entry(hass, entry):
             entry.data[CONF_PORT],
             entry.data[CONF_SYNC_MINS],
             hass.config.path(".shopping_list.json"),
-            _shopping_list_refresh
+            _get_shopping_list_loader(hass)
         )
 
     except Exception as e:
@@ -113,7 +134,6 @@ async def async_setup_entry(hass, entry):
             await asyncio.sleep(retry_delay_seconds)
 
         _LOGGER.warning("Alexa Shopping List startup sync skipped: server not ready after retries")
-
 
     remove_startup_sync = async_call_later(hass, 60, _startup_sync)
     entry.async_on_unload(remove_startup_sync)

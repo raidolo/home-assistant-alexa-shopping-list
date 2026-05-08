@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2605.128.00] - 2026-05-08
+
+### Improvements
+- **Home Assistant 2026.5 shopping list compatibility** - Added a compatibility loader in the custom component that keeps using `hass.data["shopping_list"].async_load` on older Home Assistant versions and falls back to `homeassistant.components.shopping_list.common._get_shopping_data(hass).async_load` on `2026.5.x` and newer.
 
 ## [2603.090.03] - 2026-03-31
 

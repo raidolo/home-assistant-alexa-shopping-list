@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
-from collections.abc import Awaitable, Callable
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
 
 from .asl import AlexaShoppingListSync
-from homeassistant.components import persistent_notification
+from homeassistant.helpers.event import async_track_time_interval, async_call_later
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,15 +21,29 @@ SERVICE_SYNC = "sync_alexa_shopping_list"
 
 def _get_shopping_list_loader(hass) -> Callable[[], Awaitable[None]]:
     """Return the compatible shopping list loader for the current HA version."""
-    try:
-        from homeassistant.components.shopping_list.common import _get_shopping_data
-    except ImportError:
-        return hass.data["shopping_list"].async_load
 
-    try:
-        return _get_shopping_data(hass).async_load
-    except Exception:
-        return hass.data["shopping_list"].async_load
+    async def _loader():
+        try:
+            from homeassistant.components.shopping_list.common import _get_shopping_data
+
+            await _get_shopping_data(hass).async_load()
+            return
+
+        except ImportError:
+            pass
+
+        except Exception as e:
+            _LOGGER.debug("Shopping list runtime_data refresh skipped: %s", e)
+
+        shopping_list = hass.data.get("shopping_list")
+
+        if shopping_list is None:
+            _LOGGER.debug("Shopping list legacy refresh skipped: hass.data['shopping_list'] is not available")
+            return
+
+        await shopping_list.async_load()
+
+    return _loader
 
 
 async def async_setup_entry(hass, entry):
@@ -55,6 +71,73 @@ async def async_setup_entry(hass, entry):
     services = AlexaServices(alexa, _LOGGER, hass)
     hass.services.async_register(DOMAIN, SERVICE_SYNC, services.handle_sync_service)
 
+    async def _scheduled_sync(now):
+        _LOGGER.info("Alexa Shopping List scheduled sync triggered by custom component")
+
+        try:
+            before_last_updated = alexa.last_updated
+
+            await alexa.sync(_LOGGER, True)
+
+            if alexa.last_updated is not None and alexa.last_updated != before_last_updated:
+                _LOGGER.debug("Firing alexa_shopping_list_changed event")
+                hass.bus.async_fire("alexa_shopping_list_changed")
+
+        except Exception as e:
+            _LOGGER.error(f"Alexa Shopping List Scheduled Sync Error: {e}", exc_info=True)
+
+    remove_scheduled_sync = async_track_time_interval(
+        hass,
+        _scheduled_sync,
+        timedelta(minutes=entry.data[CONF_SYNC_MINS])
+    )
+
+    entry.async_on_unload(remove_scheduled_sync)
+
+    async def _startup_sync(now):
+        _LOGGER.debug("Alexa Shopping List startup sync check started")
+
+        max_attempts = 10
+        retry_delay_seconds = 30
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                server_ready = await alexa.can_ping_server()
+
+                if server_ready:
+                    _LOGGER.info("Alexa Shopping List server ready, running startup sync")
+
+                    before_last_updated = alexa.last_updated
+
+                    await alexa.sync(_LOGGER, True)
+
+                    if alexa.last_updated is not None and alexa.last_updated != before_last_updated:
+                        _LOGGER.debug("Firing alexa_shopping_list_changed event")
+                        hass.bus.async_fire("alexa_shopping_list_changed")
+
+                    return
+
+                _LOGGER.debug(
+                    "Alexa Shopping List server not ready, startup sync attempt %s/%s",
+                    attempt,
+                    max_attempts
+                )
+
+            except Exception as e:
+                _LOGGER.debug(
+                    "Alexa Shopping List startup sync attempt %s/%s failed: %s",
+                    attempt,
+                    max_attempts,
+                    e
+                )
+
+            await asyncio.sleep(retry_delay_seconds)
+
+        _LOGGER.warning("Alexa Shopping List startup sync skipped: server not ready after retries")
+
+    remove_startup_sync = async_call_later(hass, 60, _startup_sync)
+    entry.async_on_unload(remove_startup_sync)
+
     return True
 
 
@@ -69,21 +152,13 @@ class AlexaServices:
         self.logger.info("Alexa Shopping List manual sync triggered via Home Assistant action")
 
         try:
-            updated = await self.alexa.sync(self.logger, True)
-            if updated == True:
+            before_last_updated = self.alexa.last_updated
+
+            await self.alexa.sync(self.logger, True)
+
+            if self.alexa.last_updated is not None and self.alexa.last_updated != before_last_updated:
                 _LOGGER.debug("Firing alexa_shopping_list_changed event")
                 self.hass.bus.async_fire("alexa_shopping_list_changed")
+
         except Exception as e:
             self.logger.error(f"Alexa Shopping List Sync Error: {e}", exc_info=True)
-        finally:
-            if self.alexa.is_authenticated:
-                persistent_notification.async_dismiss(self.hass, "alexa_shopping_list_auth")
-            else:
-                persistent_notification.async_create(
-                    self.hass,
-                    "Alexa Shopping List requires re-authentication. Please open the addon Web UI and log in again.",
-                    title="Alexa Shopping List Auth Expired",
-                    notification_id="alexa_shopping_list_auth"
-                )
-
-

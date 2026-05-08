@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 
 import logging
-import json
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity
 )
-from homeassistant.components import persistent_notification
 
 from . import DOMAIN
 
@@ -21,11 +19,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     update_sensor = AlexaShoppingListSyncSensor(hass, alexa)
 
-    async_add_entities([update_sensor], update_before_add=True)
+    async_add_entities([update_sensor], update_before_add=False)
 
 
 class AlexaShoppingListSyncSensor(SensorEntity):
-    """Synchronise HA and Alexa shopping lists"""
+    """Passive timestamp sensor for last Alexa Shopping List sync."""
 
     def __init__(self, hass, alexa):
         self.hass = hass
@@ -35,29 +33,28 @@ class AlexaShoppingListSyncSensor(SensorEntity):
         self._attr_icon = "mdi:sync"
         self._attr_unique_id = "alexa_shopping_list_sync"
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
-    
+        self._attr_should_poll = False
 
-    async def async_update(self) -> None:
-        try:
+        if self.alexa.last_updated is not None:
+            self._attr_native_value = self.alexa.last_updated
 
-            updated = await self.alexa.sync(_LOGGER)
-            if updated == True:
-                _LOGGER.debug("Firing alexa_shopping_list_changed event")
-                self.hass.bus.async_fire("alexa_shopping_list_changed")
-            
+    async def async_added_to_hass(self) -> None:
+        """Update timestamp when a sync completes successfully."""
+
+        async def _handle_sync_event(event):
             if self.alexa.last_updated is not None:
                 self._attr_native_value = self.alexa.last_updated
+                self.async_write_ha_state()
 
-        except Exception as e:
-            _LOGGER.error(f"Alexa Shopping List Sync Error: {e}", exc_info=True)
-        finally:
-            if self.alexa.is_authenticated:
-                persistent_notification.async_dismiss(self.hass, "alexa_shopping_list_auth")
-            else:
-                persistent_notification.async_create(
-                    self.hass,
-                    "Alexa Shopping List requires re-authentication. Please open the addon Web UI and log in again.",
-                    title="Alexa Shopping List Auth Expired",
-                    notification_id="alexa_shopping_list_auth"
-                )
+        self.async_on_remove(
+            self.hass.bus.async_listen(
+                "alexa_shopping_list_changed",
+                _handle_sync_event
+            )
+        )
 
+    async def async_update(self) -> None:
+        """Refresh timestamp only from memory. Do not trigger sync here."""
+
+        if self.alexa.last_updated is not None:
+            self._attr_native_value = self.alexa.last_updated

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from collections.abc import Awaitable, Callable
 import logging
 
 from .asl import AlexaShoppingListSync
@@ -16,6 +17,19 @@ CONF_SYNC_MINS = "sync_mins"
 SERVICE_SYNC = "sync_alexa_shopping_list"
 
 
+def _get_shopping_list_loader(hass) -> Callable[[], Awaitable[None]]:
+    """Return the compatible shopping list loader for the current HA version."""
+    try:
+        from homeassistant.components.shopping_list.common import _get_shopping_data
+    except ImportError:
+        return hass.data["shopping_list"].async_load
+
+    try:
+        return _get_shopping_data(hass).async_load
+    except Exception:
+        return hass.data["shopping_list"].async_load
+
+
 async def async_setup_entry(hass, entry):
     """Set up platform from a ConfigEntry."""
     hass.data.setdefault(DOMAIN, {})
@@ -27,7 +41,7 @@ async def async_setup_entry(hass, entry):
             entry.data[CONF_PORT],
             entry.data[CONF_SYNC_MINS],
             hass.config.path(".shopping_list.json"),
-            hass.data["shopping_list"].async_load
+            _get_shopping_list_loader(hass)
         )
 
     except Exception as e:

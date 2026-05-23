@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2605.128.00] - 2026-05-08
+
+### Improvements
+- **Home Assistant 2026.5 shopping list compatibility** - Added runtime-data based shopping list refresh handling so the integration works with newer Home Assistant shopping list internals while preserving support for older `hass.data["shopping_list"].async_load` behavior.
 
 ## [2603.090.03] - 2026-03-31
 

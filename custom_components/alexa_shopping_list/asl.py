@@ -385,13 +385,14 @@ class AlexaShoppingListSync:
             self._read_last_synced_active_items
         )
 
+        has_last_synced_snapshot = last_synced_active_items is not None
         last_synced_active_items = last_synced_active_items or []
         alexa_active_by_id = {
             self._item_id(item): item
             for item in alexa_active_items
             if self._item_id(item)
         }
-        id_aware_fetch = any(self._item_id(item) for item in alexa_items)
+        id_aware_fetch = not alexa_items or any(self._item_id(item) for item in alexa_items)
         alexa_active_names = set(alexa_list)
         last_synced_by_ha_id = {
             item.get("ha_id"): item
@@ -402,6 +403,11 @@ class AlexaShoppingListSync:
             item.get("id"): item
             for item in last_synced_active_items
             if isinstance(item, dict) and item.get("id")
+        }
+        last_synced_names = {
+            item.get("name")
+            for item in last_synced_active_items
+            if isinstance(item, dict) and item.get("name")
         }
 
         if last_synced_by_id and not id_aware_fetch:
@@ -421,6 +427,14 @@ class AlexaShoppingListSync:
                 return previous.get("id")
 
             return None
+
+        def _ha_item_in_last_synced_snapshot(item):
+            ha_id = item.get("id")
+            if ha_id and ha_id in last_synced_by_ha_id:
+                return True
+            if ha_id and ha_id in last_synced_by_id:
+                return True
+            return item.get("name") in last_synced_names
 
         current_ha_ids = set()
         for item in ha_list:
@@ -457,9 +471,12 @@ class AlexaShoppingListSync:
                         "new": name
                     })
             elif name not in alexa_active_names:
-                to_add.append(name)
+                if has_last_synced_snapshot and _ha_item_in_last_synced_snapshot(item):
+                    alexa_removed_names.append(name)
+                else:
+                    to_add.append(name)
 
-        if last_synced_active_items:
+        if has_last_synced_snapshot:
             for item in last_synced_active_items:
                 name = item.get("name")
                 alexa_id = item.get("id")
@@ -493,8 +510,7 @@ class AlexaShoppingListSync:
         if alexa_removed_names:
             await self._debug_log_entry(
                 logger,
-                "Previously synced items missing from Alexa; treating as Alexa-side completed/removed: "
-                + json.dumps(alexa_removed_names)
+                "Detected Alexa-side deletes: " + json.dumps(alexa_removed_names)
             )
         mutation_count = len(to_add) + len(to_remove) + len(to_update)
         if mutation_count > 1:

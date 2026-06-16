@@ -410,12 +410,16 @@ class AlexaShoppingListSync:
             if isinstance(item, dict) and item.get("name")
         }
 
+        id_snapshot_name_fallback = False
         if last_synced_by_id and not id_aware_fetch:
+            id_snapshot_name_fallback = True
             await self._debug_log_entry(
                 logger,
-                "Alexa ID snapshot exists but current fetch did not include IDs; refusing to export name-only fallback data"
+                "Alexa ID snapshot exists but current fetch did not include IDs; falling back to name-based comparison"
             )
-            return False
+            alexa_active_by_id = {}
+            last_synced_by_id = {}
+            last_synced_by_ha_id = {}
 
         def _ha_item_alexa_id(item):
             ha_id = item.get("id")
@@ -487,7 +491,7 @@ class AlexaShoppingListSync:
 
                 if alexa_id and alexa_id in alexa_active_by_id:
                     to_remove.append(self._item_name(alexa_active_by_id[alexa_id]))
-                elif not alexa_id and name in alexa_active_names:
+                elif name in alexa_active_names:
                     to_remove.append(name)
         else:
             await self._debug_log_entry(

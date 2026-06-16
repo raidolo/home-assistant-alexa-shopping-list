@@ -10,3 +10,14 @@ server/cache
 client/chromium/
 .agent/
 .kilocode/
+
+# Local AI/editor scratch files
+.codex_tmp/
+.kilo/
+
+# Local debugging / handoff notes
+Sync issue 2026-05-22.md
+Alexa Shopping List Sync Fix project.md
+sync-v2605.128.00-implementation-plan.md
+codex_ha_shopping_list_dependency_fix.md
+codex_server_error_guidance_handoff.md

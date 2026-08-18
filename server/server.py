@@ -39,6 +39,40 @@ alexa = None
 def _time_now():
     return int(time.time())
 
+
+def _friendly_exception_message(e, operation="Alexa operation"):
+    """Return a user-actionable error message for common Amazon/Selenium failures."""
+    message = str(e)
+    lower = message.lower()
+
+    # Common when Amazon returns HTML/challenge/sign-in content where the app
+    # expected JSON from the Alexa shopping list API.
+    if isinstance(e, json.JSONDecodeError) or "expecting value" in lower:
+        return (
+            f"{operation} failed because Amazon returned a non-JSON response. "
+            "This usually means the browser session is on an Amazon sign-in, CAPTCHA, "
+            "MFA, or AWS WAF challenge page instead of the Alexa shopping-list API. "
+            "Re-authenticate the add-on/client session, then retry. "
+            "Check the Chromium debug log for awswaf, challenge, captcha, signin, "
+            "ap/signin, or missing /alexashoppinglists/api/getlistitems requests."
+        )
+
+    if "not authenticated" in lower or "session expired" in lower:
+        return (
+            f"{operation} failed because the Amazon session is not authenticated. "
+            "Re-run the login/authentication flow and retry."
+        )
+
+    if "timeout" in lower or "virtual-list" in lower or "item-title" in lower:
+        return (
+            f"{operation} failed while waiting for the Alexa shopping-list page to load. "
+            "Amazon may have changed the page, shown a challenge/sign-in page, or the "
+            "list page may not have hydrated. Check the Chromium debug log and any saved "
+            "debug screenshot."
+        )
+
+    return f"Server error: {message}"
+
 # ============================================================
 # Config
 
@@ -188,7 +222,27 @@ async def _cmd_get_shopping_list():
         result = None, "Not authenticated"
     except Exception as e:
         logger.error(f"Error getting shopping list: {e}", exc_info=True)
-        result = None, f"Server error: {e}"
+        result = None, _friendly_exception_message(e, "get_list")
+    finally:
+        _stop_alexa()
+    return result
+
+
+async def _cmd_get_shopping_list_items():
+    try:
+        instance = _start_alexa()
+        requires_login = await asyncio.to_thread(instance.requires_login)
+        if requires_login:
+            result = None, "Not authenticated"
+        else:
+            result = await asyncio.to_thread(instance.get_alexa_list_items), None
+    except NotAuthenticatedError as e:
+        logger.warning(f"Session expired during get_list_items: {e}")
+        _set_config_value("auth_checked_time", 0)
+        result = None, "Not authenticated"
+    except Exception as e:
+        logger.error(f"Error getting shopping list items: {e}", exc_info=True)
+        result = None, _friendly_exception_message(e, "get_list_items")
     finally:
         _stop_alexa()
     return result
@@ -208,7 +262,7 @@ async def _cmd_get_add_shopping_list_item(args):
         result = None, "Not authenticated"
     except Exception as e:
         logger.error(f"Error adding item: {e}", exc_info=True)
-        result = None, f"Server error: {e}"
+        result = None, _friendly_exception_message(e, "add_item")
     finally:
         _stop_alexa()
     return result
@@ -228,7 +282,7 @@ async def _cmd_get_update_shopping_list_item(args):
         result = None, "Not authenticated"
     except Exception as e:
         logger.error(f"Error updating item: {e}", exc_info=True)
-        result = None, f"Server error: {e}"
+        result = None, _friendly_exception_message(e, "update_item")
     finally:
         _stop_alexa()
     return result
@@ -248,7 +302,7 @@ async def _cmd_get_remove_shopping_list_item(args):
         result = None, "Not authenticated"
     except Exception as e:
         logger.error(f"Error removing item: {e}", exc_info=True)
-        result = None, f"Server error: {e}"
+        result = None, _friendly_exception_message(e, "remove_item")
     finally:
         _stop_alexa()
     return result
@@ -273,7 +327,7 @@ async def _cmd_bulk_apply_shopping_list_changes(args):
         result = None, "Not authenticated"
     except Exception as e:
         logger.error(f"Error applying bulk list changes: {e}", exc_info=True)
-        result = None, f"Server error: {e}"
+        result = None, _friendly_exception_message(e, "bulk_apply_changes")
     finally:
         _stop_alexa()
     return result
@@ -303,6 +357,8 @@ async def _route_command(command, arguments={}):
     # Shopping list
     if command == "get_list":
         return await _cmd_get_shopping_list()
+    if command == "get_list_items":
+        return await _cmd_get_shopping_list_items()
     if command == "add_item":
         return await _cmd_get_add_shopping_list_item(arguments)
     if command == "update_item":
@@ -342,8 +398,12 @@ async def _process_command(websocket, path):
                 else:
                     response['error'] = 'Unknown command'
 
-            except json.JSONDecodeError:
-                response = {'result': None, 'error': 'Invalid JSON'}
+            except json.JSONDecodeError as e:
+                logger.warning(f"Invalid websocket command JSON from client: {e}")
+                response = {
+                    'result': None,
+                    'error': 'Invalid websocket command JSON from client'
+                }
             except Exception as e:
                 logger.error(f"Error processing command: {e}", exc_info=True)
                 response = {'result': None, 'error': f'Server error: {e}'}

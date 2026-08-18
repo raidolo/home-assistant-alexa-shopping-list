@@ -3,8 +3,9 @@
 from collections.abc import Awaitable, Callable
 import logging
 
-from .asl import AlexaShoppingListSync
 from homeassistant.components import persistent_notification
+
+from .asl import AlexaShoppingListSync
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -85,5 +86,4 @@ class AlexaServices:
                     title="Alexa Shopping List Auth Expired",
                     notification_id="alexa_shopping_list_auth"
                 )
-
 

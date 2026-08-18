@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [2605.128.00] - 2026-05-08
 
 ### Improvements
-- **Home Assistant 2026.5 shopping list compatibility** - Added a compatibility loader in the custom component that keeps using `hass.data["shopping_list"].async_load` on older Home Assistant versions and falls back to `homeassistant.components.shopping_list.common._get_shopping_data(hass).async_load` on `2026.5.x` and newer.
+- **Home Assistant 2026.5 shopping list compatibility** - Added runtime-data based shopping list refresh handling so the integration works with newer Home Assistant shopping list internals while preserving support for older `hass.data["shopping_list"].async_load` behavior.
+- **ID-aware Alexa sync** - Uses Alexa item IDs when available to distinguish renames, deletes, and duplicate names more reliably during sync.
+- **Alexa-side delete handling** - Uses the last sync snapshot so active Home Assistant items that were previously synced but are now missing from Alexa are treated as Alexa-side deletes instead of being re-added.
 
 ## [2603.090.03] - 2026-03-31
 

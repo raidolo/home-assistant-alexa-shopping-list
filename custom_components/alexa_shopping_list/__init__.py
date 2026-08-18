@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
+from collections.abc import Awaitable, Callable
 import logging
 
 from homeassistant.components import persistent_notification
-from homeassistant.components.shopping_list import DOMAIN as SHOPPING_LIST_DOMAIN
 
 from .asl import AlexaShoppingListSync
 
@@ -18,47 +18,22 @@ CONF_SYNC_MINS = "sync_mins"
 SERVICE_SYNC = "sync_alexa_shopping_list"
 
 
-def _get_shopping_list_runtime_data(hass):
-    shopping_list_data = hass.data.get(SHOPPING_LIST_DOMAIN)
-    if shopping_list_data is not None and hasattr(shopping_list_data, "async_load"):
-        return shopping_list_data
+def _get_shopping_list_loader(hass) -> Callable[[], Awaitable[None]]:
+    """Return the compatible shopping list loader for the current HA version."""
+    try:
+        from homeassistant.components.shopping_list.common import _get_shopping_data
+    except ImportError:
+        return hass.data["shopping_list"].async_load
 
-    entries = hass.config_entries.async_loaded_entries(SHOPPING_LIST_DOMAIN)
-    if not entries:
-        return None
-
-    runtime_data = getattr(entries[0], "runtime_data", None)
-    if runtime_data is not None and hasattr(runtime_data, "async_load"):
-        return runtime_data
-
-    return None
-
-
-async def _refresh_shopping_list_runtime(hass):
-    shopping_list_data = _get_shopping_list_runtime_data(hass)
-    if shopping_list_data is None:
-        raise RuntimeError(
-            "Home Assistant shopping_list integration is not loaded. "
-            "Add or enable the built-in Shopping List integration, then restart Home Assistant."
-        )
-
-    await shopping_list_data.async_load()
-
-    notify = getattr(shopping_list_data, "_async_notify", None)
-    if callable(notify):
-        notify()
+    try:
+        return _get_shopping_data(hass).async_load
+    except Exception:
+        return hass.data["shopping_list"].async_load
 
 
 async def async_setup_entry(hass, entry):
     """Set up platform from a ConfigEntry."""
     hass.data.setdefault(DOMAIN, {})
-
-    if _get_shopping_list_runtime_data(hass) is None:
-        _LOGGER.error(
-            "Home Assistant shopping_list integration is not loaded. "
-            "Add or enable the built-in Shopping List integration, then restart Home Assistant."
-        )
-        return False
 
     try:
 
@@ -67,7 +42,7 @@ async def async_setup_entry(hass, entry):
             entry.data[CONF_PORT],
             entry.data[CONF_SYNC_MINS],
             hass.config.path(".shopping_list.json"),
-            lambda: _refresh_shopping_list_runtime(hass)
+            _get_shopping_list_loader(hass)
         )
 
     except Exception as e:
@@ -111,5 +86,4 @@ class AlexaServices:
                     title="Alexa Shopping List Auth Expired",
                     notification_id="alexa_shopping_list_auth"
                 )
-
 

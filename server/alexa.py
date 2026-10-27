@@ -318,7 +318,30 @@ class AlexaShoppingList:
         return containers[0]
 
 
+    def _scroll_alexa_list_to_top(self, list_container):
+        # The shopping list is a virtual list: only the rows near the viewport
+        # exist in the DOM. Every scan below only scrolls *down*, so it has to
+        # start at the top. After a mutation (add/update/remove) the page is
+        # usually still scrolled down, and a scan from there misses every item
+        # above the viewport: get_list returns a partial list (issue #6) and
+        # remove/update can't find the item (issue #4).
+        first_text = None
+        for _ in range(50):
+            try:
+                list_items = list_container.find_elements(By.CLASS_NAME, 'item-title')
+                current_first_text = list_items[0].get_attribute('innerText') if list_items else None
+                if not list_items or current_first_text == first_text:
+                    return
+                first_text = current_first_text
+                scroll_origin = ScrollOrigin.from_element(list_items[0])
+                ActionChains(self.driver).scroll_from_origin(scroll_origin, 0, -1000).perform()
+                time.sleep(0.5)
+            except StaleElementReferenceException:
+                time.sleep(1)
+
+
     def _extract_alexa_list_items(self, list_container):
+        self._scroll_alexa_list_to_top(list_container)
         found = []
         last_text = None
         max_scrolls = 50
@@ -389,21 +412,8 @@ class AlexaShoppingList:
             self._validate_empty_alexa_list_result(list_container)
 
         if not refresh:
-            # Now let's scroll back to the top
-            first_text = None
-            while True:
-                try:
-                    list_items = list_container.find_elements(By.CLASS_NAME, 'item-title')
-                    current_first_text = list_items[0].get_attribute('innerText') if list_items else None
-                    if not list_items or current_first_text == first_text:
-                        # We've reached the top
-                        break
-                    first_text = current_first_text
-                    scroll_origin = ScrollOrigin.from_element(list_items[0])
-                    ActionChains(self.driver).scroll_from_origin(scroll_origin, 0, -1000).perform()
-                except StaleElementReferenceException:
-                    time.sleep(1)
-                    continue
+            # Leave the page at the top for the next operation
+            self._scroll_alexa_list_to_top(list_container)
 
         return found
 
@@ -413,6 +423,7 @@ class AlexaShoppingList:
             self._prepare_alexa_list_page(False)
         self._wait_for_alexa_list_items()
         list_container = self.driver.find_element(By.CLASS_NAME, 'virtual-list')
+        self._scroll_alexa_list_to_top(list_container)
 
         last_text = None
         max_scrolls = 50

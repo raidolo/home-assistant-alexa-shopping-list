@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Bug Fixes
+- **Partial list after add/update/remove** - The Alexa shopping list is a virtual list that only renders the rows near the viewport, and list scans only scroll down. After a mutation the page was usually still scrolled down, so the refreshed list missed every item above the viewport and the partial list was exported to Home Assistant (#6). Scans now scroll the list to the top first.
+- **Remove/update not finding items** - The same applied to looking up an item to remove or update: items above the current scroll position were not found and the operation was silently skipped (#4). The lookup now starts at the top as well.
+
 ## [2605.128.00] - 2026-05-08
 
 ### Improvements
